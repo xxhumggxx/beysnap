@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TikTok Downloader</title>
+<style>
+  :root { --bg:#0f1115; --card:#181b22; --line:#2a2f3a; --text:#eef0f4; --muted:#8b93a3; --accent:#25f4ee; --accent2:#fe2c55; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background:var(--bg); color:var(--text); min-height:100vh; }
+  main { max-width:720px; margin:0 auto; padding:48px 16px 64px; }
+  h1 { font-size:28px; margin:0 0 6px; }
+  h1 span { background:linear-gradient(90deg,var(--accent),var(--accent2)); -webkit-background-clip:text; background-clip:text; color:transparent; }
+  .sub { color:var(--muted); margin:0 0 24px; }
+  .bar { display:flex; gap:8px; }
+  input { flex:1; padding:14px 16px; border-radius:12px; border:1px solid var(--line); background:var(--card); color:var(--text); font-size:16px; min-width:0; }
+  input:focus { outline:2px solid var(--accent); border-color:transparent; }
+  button { padding:14px 18px; border-radius:12px; border:0; font-size:15px; font-weight:600; cursor:pointer; }
+  .go { background:linear-gradient(90deg,var(--accent),var(--accent2)); color:#000; }
+  .ghost { background:var(--card); color:var(--text); border:1px solid var(--line); }
+  button:disabled { opacity:.5; cursor:wait; }
+  .msg { margin-top:16px; padding:12px 14px; border-radius:10px; background:#2a1519; border:1px solid #5a232b; color:#ffb3bf; display:none; }
+  .result { margin-top:24px; background:var(--card); border:1px solid var(--line); border-radius:16px; padding:16px; display:none; }
+  .meta { display:flex; gap:14px; align-items:center; margin-bottom:14px; }
+  .meta img { width:72px; height:96px; object-fit:cover; border-radius:10px; background:#000; }
+  .meta .t { font-weight:600; line-height:1.35; display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; }
+  .meta .a { color:var(--muted); font-size:14px; margin-top:4px; }
+  .list { display:flex; flex-direction:column; gap:8px; }
+  .dl { display:flex; justify-content:space-between; align-items:center; padding:12px 14px; border-radius:12px; border:1px solid var(--line); color:var(--text); text-decoration:none; background:#12151b; }
+  .dl:hover { border-color:var(--accent); }
+  .dl small { color:var(--muted); }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(110px,1fr)); gap:8px; margin-top:8px; }
+  .grid a { display:block; text-align:center; text-decoration:none; color:var(--text); font-size:13px; }
+  .grid img { width:100%; aspect-ratio:3/4; object-fit:cover; border-radius:10px; display:block; margin-bottom:4px; background:#000; }
+  .all { margin-top:10px; width:100%; }
+  .note { margin-top:28px; font-size:12.5px; color:var(--muted); line-height:1.5; }
+</style>
+</head>
+<body>
+<main>
+  <h1>TikTok <span>Downloader</span></h1>
+  <p class="sub">Dán link TikTok để tải video, ảnh hoặc nhạc – có hoặc không watermark.</p>
+
+  <form class="bar" id="form">
+    <input id="url" type="url" placeholder="https://www.tiktok.com/@user/video/..." autocomplete="off" required>
+    <button type="button" class="ghost" id="paste">Dán</button>
+    <button class="go" id="go">Tải</button>
+  </form>
+
+  <div class="msg" id="err"></div>
+
+  <section class="result" id="res">
+    <div class="meta">
+      <img id="cover" alt="">
+      <div><div class="t" id="title"></div><div class="a" id="author"></div></div>
+    </div>
+    <div class="list" id="list"></div>
+    <div id="images"></div>
+  </section>
+
+  <p class="note">Chỉ tải nội dung bạn có quyền sử dụng. Video/ảnh thuộc bản quyền của tác giả – hãy ghi nguồn và tôn trọng quyền sở hữu khi đăng lại.</p>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const dlUrl = t => '/api/download?t=' + encodeURIComponent(t);
+
+$('paste').onclick = async () => {
+  try { $('url').value = await navigator.clipboard.readText(); $('url').focus(); }
+  catch { $('url').focus(); }
+};
+
+$('form').onsubmit = async e => {
+  e.preventDefault();
+  $('err').style.display = 'none'; $('res').style.display = 'none';
+  $('go').disabled = true; $('go').textContent = 'Đang xử lý...';
+  try {
+    const r = await fetch('/api/info', { method:'POST', headers:{'Content-Type':'application/json'},
+                                         body: JSON.stringify({ url: $('url').value.trim() }) });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || 'Có lỗi xảy ra');
+    render(d);
+  } catch (ex) {
+    $('err').textContent = ex.message; $('err').style.display = 'block';
+  } finally {
+    $('go').disabled = false; $('go').textContent = 'Tải';
+  }
+};
+
+// Tải qua fetch -> blob để thấy tiến độ và hiện lỗi rõ ràng (không bị "im lặng")
+async function save(item, label) {
+  const old = label.textContent;
+  $('err').style.display = 'none';
+  try {
+    label.textContent = item.slow ? 'Đang xử lý… (có thể vài phút)' : 'Đang tải…';
+    const r = await fetch(dlUrl(item.token));
+    if (!r.ok) {
+      let msg = 'Lỗi ' + r.status;
+      try { msg = (await r.json()).error || msg; } catch {}
+      throw new Error(msg);
+    }
+    const total = +r.headers.get('Content-Length') || 0;
+    const reader = r.body.getReader(), chunks = [];
+    let got = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value); got += value.length;
+      label.textContent = total ? Math.round(got / total * 100) + '%' : (got / 1048576).toFixed(1) + ' MB';
+    }
+    const blob = new Blob(chunks, { type: r.headers.get('Content-Type') || 'application/octet-stream' });
+    const u = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = u; a.download = item.filename || 'tiktok';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(u), 15000);
+    label.textContent = '✓ Đã tải';
+  } catch (ex) {
+    $('err').textContent = 'Tải thất bại: ' + ex.message;
+    $('err').style.display = 'block';
+    label.textContent = old;
+  }
+}
+
+function render(d) {
+  $('cover').src = d.cover || ''; $('cover').style.display = d.cover ? '' : 'none';
+  $('title').textContent = d.title || '(Không có tiêu đề)';
+  $('author').textContent = d.author ? '@' + d.author.replace(/^@/, '') : '';
+
+  const list = $('list'), imgs = $('images');
+  list.innerHTML = ''; imgs.innerHTML = '';
+  const photos = d.items.filter(i => i.kind === 'image');
+
+  d.items.filter(i => i.kind !== 'image').forEach(i => {
+    const a = document.createElement('a');
+    a.className = 'dl'; a.href = dlUrl(i.token);
+    a.innerHTML = `<span>${i.label}</span><small>.${i.ext} ⬇</small>`;
+    a.onclick = e => { e.preventDefault(); save(i, a.querySelector('small')); };
+    list.appendChild(a);
+  });
+
+  if (photos.length) {
+    const grid = document.createElement('div'); grid.className = 'grid';
+    const labels = [];
+    photos.forEach(i => {
+      const a = document.createElement('a'); a.href = dlUrl(i.token);
+      a.innerHTML = `<img src="${dlUrl(i.token)}" loading="lazy" alt=""><span>${i.label} ⬇</span>`;
+      const span = a.querySelector('span');
+      a.onclick = e => { e.preventDefault(); save(i, span); };
+      labels.push(span);
+      grid.appendChild(a);
+    });
+    imgs.appendChild(grid);
+    const all = document.createElement('button');
+    all.className = 'ghost all'; all.textContent = `Tải tất cả ${photos.length} ảnh`;
+    all.onclick = async () => {
+      for (let k = 0; k < photos.length; k++) await save(photos[k], labels[k]);
+    };
+    imgs.appendChild(all);
+  }
+  $('res').style.display = 'block';
+}
+</script>
+</body>
+</html>

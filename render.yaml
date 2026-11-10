@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: tiktok-downloader
+    runtime: python
+    plan: free
+    healthCheckPath: /health
+    buildCommand: pip install -r requirements.txt
+    # BẮT BUỘC -w 1: link tải lưu trong bộ nhớ, nhiều worker sẽ làm link hết hạn giả
+    startCommand: gunicorn -w 1 --threads 8 --timeout 300 -b 0.0.0.0:$PORT app:app
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.7
+      - key: API_KEY
+        generateValue: true   # Render tự sinh khoá, xem trong tab Environment

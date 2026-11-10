@@ -78,16 +78,39 @@ def codec_label(vcodec: str) -> str:
 
 # ---------- nguồn 1: tikwm (hỗ trợ cả ảnh slideshow) ----------
 def fetch_tikwm(url: str):
-    r = requests.get(
-        "https://www.tikwm.com/api/",
-        params={"url": url, "hd": 1},
-        headers={"User-Agent": UA},
-        timeout=20,
-    )
-    r.raise_for_status()
-    j = r.json()
-    if j.get("code") != 0 or not j.get("data"):
-        raise RuntimeError(j.get("msg") or "tikwm không trả dữ liệu")
+    j, last = None, "không rõ"
+    for attempt in range(3):
+        try:
+            r = requests.get(
+                "https://www.tikwm.com/api/",
+                params={"url": url, "hd": 1},
+                headers={"User-Agent": UA, "Referer": "https://www.tikwm.com/",
+                         "Origin": "https://www.tikwm.com"},
+                timeout=20,
+            )
+            if r.status_code != 200:
+                last = f"HTTP {r.status_code}" + (" (bị chặn IP)" if r.status_code in (403, 429) else "")
+                time.sleep(1.5)
+                continue
+            try:
+                j = r.json()
+            except ValueError:
+                last = "tikwm trả về trang lạ (có thể chặn IP máy chủ)"
+                time.sleep(1.5)
+                continue
+            if j.get("code") == 0 and j.get("data"):
+                break
+            last = str(j.get("msg") or "tikwm không trả dữ liệu")
+            j = None
+            if "limit" in last.lower():  # giới hạn 1 yêu cầu/giây của tikwm
+                time.sleep(1.5)
+                continue
+            break
+        except requests.RequestException as e:
+            last = f"{type(e).__name__}: {e}"
+            time.sleep(1)
+    if not j:
+        raise RuntimeError(last)
     d = j["data"]
     base = safe_name(d.get("title"), d.get("id", "tiktok"))
     items = []
@@ -288,7 +311,10 @@ def api_info():
             errors.append(f"{name}: {e}")
     tk, yd = res.get("tikwm"), res.get("ytdlp")
     if not tk and not yd:
-        return jsonify(error="Không lấy được media. Link có thể là riêng tư hoặc đã bị xoá.",
+        app.logger.warning("api/info thất bại: %s | %s", errors, url)
+        short = errors[0].split(": ", 1)[-1][:160] if errors else ""
+        return jsonify(error="Không lấy được media. Nguyên nhân: " + short +
+                             " (nếu link công khai mà vẫn lỗi thì có thể nguồn đang chặn IP máy chủ, thử lại sau ít phút)",
                        details=errors), 502
 
     base_info = tk or yd

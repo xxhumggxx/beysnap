@@ -12,3 +12,5 @@ services:
         value: 3.12.7
       - key: API_KEY
         generateValue: true   # Render tự sinh khoá, xem trong tab Environment
+      - key: GROQ_API_KEY
+        sync: false           # tự điền trong Render > Environment, không để trong code

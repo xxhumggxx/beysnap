@@ -1,67 +1,59 @@
-# Deploy miễn phí + Phím tắt iPhone
+# Beysnap · Tải TikTok (video, ảnh, nhạc) + AI
 
-## 1. Deploy lên Render (miễn phí, không cần thẻ)
+Dán link TikTok → tải **video** (HD, không watermark hoặc có watermark), **ảnh** slideshow (xem từng ảnh, chọn ảnh, tải ZIP), **nhạc MP3**.
+Có AI (Groq): phiên âm, phụ đề `.srt`, tóm tắt, gợi ý caption/hashtag, dịch, hỏi đáp về video.
+Giao diện Giáng sinh, dùng được trên điện thoại; có API cho Phím tắt iPhone.
 
-1. Tạo repo GitHub (private cũng được) chứa: `app.py`, `index.html`, `requirements.txt`, `render.yaml`.
-2. Vào render.com → New → **Blueprint** → chọn repo. Render đọc `render.yaml` và tự deploy.
-3. Khi xong bạn có địa chỉ dạng `https://tiktok-downloader-xxxx.onrender.com`.
-4. Vào tab **Environment** của service, copy giá trị `API_KEY` (Render tự sinh). Đây là mật khẩu của API.
+## Chạy trên máy
+```bash
+pip install -r requirements.txt
+python app.py        # http://127.0.0.1:5000
+```
 
-Lưu ý gói free: không dùng 15 phút thì server ngủ, lần gọi đầu mất khoảng 30–50 giây để thức dậy.
-Giữ `-w 1` trong lệnh khởi động (đã có sẵn trong `render.yaml`), vì link tải lưu trong bộ nhớ.
+## Deploy Render (miễn phí)
+1. Đưa mã lên GitHub. Render → New → Web Service (hoặc Blueprint với `render.yaml`).
+2. Build: `pip install -r requirements.txt`
+   Start: `gunicorn -w 1 --threads 8 --timeout 300 -b 0.0.0.0:$PORT app:app` (**bắt buộc `-w 1`**, link tải lưu trong bộ nhớ).
+3. Environment:
 
-### Giữ server luôn thức (UptimeRobot, miễn phí)
+| Biến | Bắt buộc | Ý nghĩa |
+|---|---|---|
+| `API_KEY` | nên có | Khoá cho `/api/v1/*` |
+| `GROQ_API_KEY` | để dùng AI | Khoá Groq, chỉ lưu ở server, không bao giờ để trong mã hay gửi cho trình duyệt |
+| `PYTHON_VERSION` | nên có | `3.12.7` |
+| `GROQ_WHISPER_MODEL` | không | mặc định `whisper-large-v3-turbo` |
+| `GROQ_CHAT_MODEL` / `GROQ_CHAT_FALLBACK` | không | mặc định `openai/gpt-oss-120b` / `openai/gpt-oss-20b` |
+| `AI_LIMIT` | không | số lượt AI mỗi 10 phút mỗi IP (mặc định 10) |
 
-1. Đăng ký uptimerobot.com → **Add New Monitor**.
-2. Loại **HTTP(s)**, URL: `https://TEN-MIEN.onrender.com/health`, chu kỳ **5 phút**.
-3. Xong. Render chỉ ngủ khi 15 phút không có lượt truy cập, nên được gọi mỗi 5 phút thì luôn thức.
+4. Health check path: `/health`. Dùng UptimeRobot gọi `/health` mỗi 5 phút để server không ngủ.
 
-Đây là cách lách, Render có thể thay đổi chính sách. Gói free có 750 giờ mỗi tháng, đủ cho một dịch vụ chạy cả tháng, nên đừng tạo thêm dịch vụ khác trên cùng tài khoản.
-
-### Tiết kiệm băng thông (Render free chỉ có 5 GB mỗi tháng)
-
-Thêm trường `mode` = `redirect` vào bước Lấy nội dung của URL (xem mục 3). Khi đó server chỉ trả địa chỉ gốc và iPhone tự tải thẳng từ nguồn, gần như không tốn băng thông. Nếu cách này bị lỗi (tải ra file hỏng hoặc 403), xoá trường `mode` để quay lại chế độ tải qua server.
-
-## 2. API
+## API (cho Phím tắt, script)
+Gửi `POST` dạng form (hoặc GET) với `url` và `key`. Chi tiết và cách làm Phím tắt: `PROMPT_PHIM_TAT_IPHONE.md`.
 
 | Đường dẫn | Việc |
 |---|---|
-| `/api/v1/video` | Trả thẳng file mp4 không watermark (ưu tiên HD). Thêm `wm=1` để lấy bản có watermark. |
-| `/api/v1/info` | Trả JSON: `video_best`, `video_hd`, `video`, `video_watermark`, `music`, `images` (danh sách link qua server, hết hạn sau 15 phút) và `direct` (link gốc từ nguồn, không tốn băng thông). |
-| `/health` | Trả `ok`, để UptimeRobot gọi giữ server thức. |
+| `/api/v1/info` | JSON: loại bài (video/photo), link video, nhạc, danh sách ảnh, ZIP, `choices` |
+| `/api/v1/video` | MP4 không watermark. `quality=hd\|sd\|wm` |
+| `/api/v1/music` | MP3 |
+| `/api/v1/image` | 1 ảnh. `index=1..N`, `fmt=jpg` |
+| `/api/v1/get` | `type=video\|music\|image\|zip` |
+| `/api/v1/ai` | `task=summary\|caption\|hashtags\|transcript\|srt\|translate`, `lang=vi\|en\|...` |
+| `/health` | `ok` |
 
-Gửi bằng GET hoặc POST với các tham số `url` và `key` (hoặc header `X-API-Key`).
-Với Phím tắt nên dùng **POST + Form** vì link TikTok có dấu `&`, nếu ghép vào đường dẫn sẽ bị cắt.
+Mặc định tải **qua server** (ổn định). `mode=redirect` chỉ để thử, có thể gây 403.
 
-Thử nhanh trên máy tính:
-```
-curl -X POST https://TEN-MIEN.onrender.com/api/v1/video \
-  -F "url=https://vt.tiktok.com/xxxx/" -F "key=KEY_CUA_BAN" -o video.mp4
-```
+## Đã làm gì để nhanh
+- Gọi nguồn chính (tikwm) trước; yt-dlp chỉ chạy khi cần (nút "Tìm chất lượng cao hơn") hoặc khi nguồn chính lỗi.
+- Bộ nhớ đệm 8 phút cho cùng một link, kết nối giữ sẵn (keep-alive), khối truyền 256 KB.
+- Ảnh tải song song, ZIP dựng song song; thumbnail dùng lại bộ nhớ đệm của trình duyệt khi bấm tải.
+- Tự dán và tự tải khi dán link; đánh thức server ngay khi mở trang.
+- Nếu một nguồn bị chặn, API tự thử bản video khác (HD → thường → …).
 
-## 3. Phím tắt iPhone: tải video
+## Bảo mật
+- Đặt `API_KEY`. Không đưa khoá vào GitHub, ảnh chụp màn hình hay chat. Lộ khoá thì tạo lại ngay.
+- Có giới hạn tốc độ theo IP cho web, API và AI.
 
-Mở app **Phím tắt** → dấu **+** → đặt tên "Tải TikTok", rồi thêm các hành động:
-
-1. **Nhận đầu vào từ Share Sheet**: bật *Hiển thị trong Trang tính chia sẻ* (Show in Share Sheet), loại đầu vào chọn **URL** và **Văn bản**.
-2. **Lấy nội dung của URL** (Get Contents of URL):
-   - URL: `https://TEN-MIEN.onrender.com/api/v1/video`
-   - Bấm *Hiện thêm* → Phương thức: **POST** → Nội dung yêu cầu: **Biểu mẫu** (Form)
-   - Thêm trường **Văn bản** `url` = biến *Đầu vào phím tắt* (Shortcut Input)
-   - Thêm trường **Văn bản** `key` = key của bạn
-   - Thêm trường **Văn bản** `mode` = `redirect` (tiết kiệm băng thông, xem mục 1)
-3. **Lưu vào album ảnh** (Save to Photo Album), đầu vào là *Nội dung của URL*.
-4. (Tuỳ chọn) **Hiện thông báo**: "Đã lưu video".
-
-Cách dùng: trong TikTok bấm **Chia sẻ → Sao chép liên kết**, hoặc **Chia sẻ → Khác → Tải TikTok**. Nếu chạy từ danh sách phím tắt thì thêm hành động **Lấy clipboard** ở đầu và dùng nó thay cho *Đầu vào phím tắt*.
-
-### Bài ảnh (slideshow)
-Dùng `/api/v1/info` thay cho `/api/v1/video`, sau đó:
-1. **Lấy giá trị từ từ điển** → khoá `images` → **Lặp lại với từng mục** (Repeat with Each)
-2. Trong vòng lặp: **Lấy nội dung của URL** (GET, URL là *Mục lặp lại*) → **Lưu vào album ảnh**.
-
-## 4. Lưu ý
-
-- **Bảo mật:** luôn đặt `API_KEY`. Không có key, ai biết địa chỉ cũng dùng được và làm bạn hết giới hạn băng thông.
-- TikTok có thể chặn IP của máy chủ miễn phí. API dùng tikwm nên thường vẫn chạy, nhưng nếu tikwm đổi cách hoạt động thì cần cập nhật `fetch_tikwm`.
-- Nút upscale 4K và yt-dlp trên giao diện web cần ffmpeg, mà Render free không có sẵn. Phần đó tự ẩn, còn API và tải thường không bị ảnh hưởng.
+## Lưu ý
+- TikTok/tikwm có thể đổi hoặc chặn IP máy chủ bất cứ lúc nào; khi đó sửa hàm `fetch_tikwm`.
+- Nút 4K chỉ phóng to bằng ffmpeg (cần ffmpeg, Render free không có sẵn).
+- Chỉ tải nội dung bạn có quyền sử dụng, tôn trọng bản quyền tác giả.

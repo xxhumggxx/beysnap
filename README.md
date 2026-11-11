@@ -23,6 +23,7 @@ python app.py        # http://127.0.0.1:5000
 | `PYTHON_VERSION` | nên có | `3.12.7` |
 | `GROQ_WHISPER_MODEL` | không | mặc định `whisper-large-v3-turbo` |
 | `GROQ_CHAT_MODEL` / `GROQ_CHAT_FALLBACK` | không | mặc định `openai/gpt-oss-120b` / `openai/gpt-oss-20b` |
+| `TIKWM_RELAY` + `RELAY_KEY` | không | Địa chỉ Cloudflare Worker chuyển tiếp (xem `CLOUDFLARE_API.md`) khi tikwm chặn IP Render |
 | `AI_LIMIT` | không | số lượt AI mỗi 10 phút mỗi IP (mặc định 10) |
 
 4. Health check path: `/health`. Dùng UptimeRobot gọi `/health` mỗi 5 phút để server không ngủ.
@@ -57,3 +58,14 @@ Mặc định tải **qua server** (ổn định). `mode=redirect` chỉ để t
 - TikTok/tikwm có thể đổi hoặc chặn IP máy chủ bất cứ lúc nào; khi đó sửa hàm `fetch_tikwm`.
 - Nút 4K chỉ phóng to bằng ffmpeg (cần ffmpeg, Render free không có sẵn).
 - Chỉ tải nội dung bạn có quyền sử dụng, tôn trọng bản quyền tác giả.
+
+## Khi tikwm chặn IP máy chủ (lỗi 403)
+Server tự thử lần lượt: Cloudflare Worker (nếu cấu hình) → giả trình duyệt Chrome → requests thường → yt-dlp. Nếu vẫn lỗi:
+1. **Cloudflare Worker (miễn phí, luôn bật):** `cloudflare-api-worker.js` vừa là API riêng cho Phím tắt vừa làm cầu nối cho Render (`TIKWM_RELAY` = `https://TEN.workers.dev/relay`, `RELAY_KEY` = `API_KEY` của Worker). Xem `CLOUDFLARE_API.md`. Không đảm bảo thành công vì tikwm có thể chặn cả IP Cloudflare.
+2. **Phím tắt trực tiếp:** iPhone gọi tikwm không qua Render, xem `PHIM_TAT_TIKWM_TRUC_TIEP.md`.
+3. **Đổi máy chủ:** Oracle Cloud Always Free hoặc chạy trên máy nhà qua Cloudflare Tunnel (IP nhà ít bị chặn).
+
+## Bài ảnh (slideshow) và chẩn đoán
+- Server thử lần lượt: tikwm với link gốc → link thật (mở link rút gọn) → đổi `/photo/` thành `/video/` → đọc thẳng trang TikTok → yt-dlp.
+- Nếu server không tải được ảnh (nguồn chặn), trình duyệt tự tải ảnh gốc và nút đổi thành "Mở ảnh gốc" (giữ ảnh → Lưu ảnh).
+- Chẩn đoán: mở `/api/debug?url=LINK_TIKTOK&key=API_KEY` để xem từng nguồn thành công hay lỗi gì (kèm kiểm tra tải thử ảnh đầu tiên).

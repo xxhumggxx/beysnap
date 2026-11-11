@@ -106,6 +106,7 @@
   .tile .ck { position:absolute; right:8px; top:8px; width:26px; height:26px; accent-color:var(--red); cursor:pointer; }
   .tile .save { position:absolute; left:8px; right:8px; bottom:8px; border:0; border-radius:999px; padding:7px; font:inherit; font-weight:600; cursor:pointer;
     background:rgba(255,255,255,.92); color:#3a2a30; }
+  a.save { display:block; text-align:center; text-decoration:none; }
   .prog { height:6px; border-radius:99px; background:var(--line); overflow:hidden; margin-top:10px; display:none; }
   .prog i { display:block; height:100%; width:0; background:linear-gradient(90deg,var(--red),var(--gold),var(--green)); transition:width .2s; }
 
@@ -390,9 +391,17 @@ function tile(im, k) {
   const t = el('div', { class: 'tile', id: 'tile-' + k });
   const sv = el('button', { class: 'save', type: 'button', text: '⬇ Tải ảnh ' + im.index });
   const img = el('img', { src: dl(im.token), loading: 'lazy', alt: 'Ảnh ' + im.index });
+  // Nếu server không lấy được ảnh (bị nguồn chặn), trình duyệt của bạn tự tải ảnh gốc
+  const toDirect = () => {
+    if (!im.direct || t.dataset.direct) return; t.dataset.direct = '1';
+    if (img.dataset.tried !== '1') { img.dataset.tried = '1'; img.referrerPolicy = 'no-referrer'; img.src = im.direct; }
+    sv.replaceWith(el('a', { class: 'save', href: im.direct, target: '_blank', rel: 'noopener noreferrer', text: '↗ Mở ảnh gốc' }));
+    toast('Mở ảnh gốc rồi giữ ảnh → Lưu ảnh');
+  };
+  img.onerror = toDirect;
   img.onclick = () => openLb(k);
   ck.onchange = () => { ck.checked ? selected.add(k) : selected.delete(k); t.classList.toggle('sel', ck.checked); updateSel(); };
-  sv.onclick = () => save(im, sv);
+  sv.onclick = async () => { if (!(await save(im, sv))) toDirect(); };
   t.append(img, el('span', { class: 'no', text: String(im.index) }), ck, sv); return t;
 }
 function updateSel() {
@@ -413,8 +422,9 @@ $('dlSel').onclick = async () => {
 };
 $('dlZip').onclick = () => save({ token: cur.zip, filename: ((cur.title || 'anh').replace(/[^\p{L}\p{N}]+/gu, '_').replace(/^_|_$/g, '').slice(0, 40) || 'anh') + '_anh.zip' }, $('dlZip'));
 
+$('lbImg').onerror = () => { const im = cur && cur.images[lbIdx]; if (im && im.direct && !$('lbImg').dataset.d) { $('lbImg').dataset.d = '1'; $('lbImg').referrerPolicy = 'no-referrer'; $('lbImg').src = im.direct; } };
 function openLb(k) {
-  lbIdx = k; const im = cur.images[k]; $('lbImg').src = dl(im.token); $('lbImg').alt = 'Ảnh ' + im.index;
+  lbIdx = k; const im = cur.images[k]; $('lbImg').dataset.d = ''; $('lbImg').removeAttribute('referrerpolicy'); $('lbImg').src = dl(im.token); $('lbImg').alt = 'Ảnh ' + im.index;
   $('lbSave').textContent = `⬇ Tải ảnh ${im.index}/${cur.images.length}`;
   if (!$('lb').open) $('lb').showModal();
 }

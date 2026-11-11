@@ -42,7 +42,8 @@ CÁC ĐƯỜNG DẪN API
 3) POST /api/v1/music  -> trả thẳng file MP3
 4) POST /api/v1/image  -> trả thẳng 1 ảnh. tuỳ chọn: index = 1,2,3… (mặc định 1), fmt = jpg (đổi sang JPEG cho chắc mở được trên iPhone)
 5) POST /api/v1/get    -> tham số type = video | music | image | zip (mặc định tự chọn theo bài)
-6) POST /api/v1/ai     -> task = summary | caption | hashtags | transcript | srt | translate, lang = vi | en | zh | ja | ko ...
+6) POST /api/v1/ai     -> task = summary | chapters | caption | hashtags | transcript | srt | translate | ideas, lang = vi | en | zh | ja | ko ...
+     (cần AI: đặt GROQ_API_KEY trên server Render)
      trả JSON { "task", "lang", "result": "văn bản" }
 
 YÊU CẦU CÁC PHÍM TẮT CẦN LÀM

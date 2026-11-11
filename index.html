@@ -189,16 +189,26 @@
     <div class="panel" id="p-music"><div class="list" id="mlist"></div></div>
 
     <div class="panel" id="p-ai">
+      <div class="box" id="keyBox" style="display:none;margin-bottom:12px">
+        <h4><span>🔑 Khoá AI (Groq, miễn phí)</span><span class="acts"><button class="mini" id="keyDel" type="button" style="display:none">Xoá khoá</button></span></h4>
+        <p class="note" id="keyNote" style="margin:0 0 8px"></p>
+        <div class="ask"><input id="gkey" type="password" placeholder="gsk_…" autocomplete="off" aria-label="Khoá Groq"><button class="btn soft" id="gkeySave" type="button">Lưu</button></div>
+      </div>
       <div class="ai-row">
+        <button class="btn go" id="aiBtn" type="button">✨ Phân tích video</button>
+        <button class="btn gold" id="visBtn" type="button" style="display:none">👁️ AI xem ảnh</button>
+      </div>
+      <div class="ai-row" id="aiMore" style="display:none;margin-top:10px">
         <label for="lang" style="color:var(--muted)">Dịch sang</label>
         <select id="lang">
           <option value="vi">Tiếng Việt</option><option value="en">English</option><option value="zh">中文</option>
           <option value="ja">日本語</option><option value="ko">한국어</option><option value="es">Español</option>
           <option value="fr">Français</option><option value="th">ไทย</option><option value="id">Bahasa Indonesia</option>
         </select>
-        <button class="btn go" id="aiBtn" type="button">✨ Phân tích bằng AI</button>
+        <button class="btn soft" id="trBtn" type="button">🌍 Dịch phụ đề</button>
+        <button class="btn soft" id="ideaBtn" type="button">💡 Ý tưởng &amp; chấm hook</button>
       </div>
-      <p class="note" id="aiNote">AI nghe lời thoại, rồi phiên âm, tóm tắt, gợi ý caption, hashtag và dịch. Mỗi lượt mất khoảng 10–30 giây.</p>
+      <p class="note" id="aiNote"></p>
       <div class="res" id="aiRes"></div>
     </div>
   </section>
@@ -294,9 +304,11 @@ async function pool(tasks, n) { let i = 0; await Promise.all(Array.from({ length
 
 /* ---------- lấy thông tin ---------- */
 async function post(path, body) {
-  const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const headers = { 'Content-Type': 'application/json' };
+  if (path.startsWith('/api/ai/')) { const k = getKey(); if (k) headers['X-Groq-Key'] = k; }
+  const r = await fetch(path, { method: 'POST', headers, body: JSON.stringify(body) });
   let d = {}; try { d = await r.json(); } catch {}
-  if (!r.ok) throw new Error(d.error || 'Có lỗi xảy ra (' + r.status + ')');
+  if (!r.ok) { const e = new Error(d.error || 'Có lỗi xảy ra (' + r.status + ')'); e.code = d.code; throw e; }
   return d;
 }
 $('form').onsubmit = async e => {
@@ -340,12 +352,7 @@ function render(d) {
   if (d.audio) ml.append(videoBtn({ ...d.audio, quality: 'mp3' }, '🎵'));
 
   // AI
-  $('aiRes').replaceChildren();
-  $('aiBtn').disabled = !d.ai;
-  $('aiNote').textContent = d.ai
-    ? (d.is_photo ? 'Bài ảnh không có lời thoại: AI sẽ dựa vào mô tả để gợi ý caption, hashtag và bản dịch.'
-                  : 'AI nghe lời thoại, rồi phiên âm, tóm tắt, gợi ý caption, hashtag và dịch. Mỗi lượt mất khoảng 10–30 giây.')
-    : 'Tính năng AI chưa được bật trên server này.';
+  setupAI(d);
 
   // tabs
   const tabs = [];
@@ -436,39 +443,119 @@ $('lb').addEventListener('click', e => { if (e.target === $('lb')) $('lb').close
 addEventListener('keydown', e => { if (!$('lb').open) return; if (e.key === 'ArrowLeft') $('lbPrev').click(); if (e.key === 'ArrowRight') $('lbNext').click(); });
 
 /* ---------- AI ---------- */
+const KEYNAME = 'beysnap_groq';
+const getKey = () => { try { return localStorage.getItem(KEYNAME) || ''; } catch { return ''; } };
+const setKey = v => { try { v ? localStorage.setItem(KEYNAME, v) : localStorage.removeItem(KEYNAME); } catch {} };
+const LANGTAG = { vi: 'vi-VN', en: 'en-US', zh: 'zh-CN', ja: 'ja-JP', ko: 'ko-KR', es: 'es-ES', fr: 'fr-FR', th: 'th-TH', id: 'id-ID' };
+
+function refreshKeyBox() {
+  const need = cur && !cur.ai_key, has = !!getKey();
+  $('keyBox').style.display = need ? '' : 'none';
+  $('keyDel').style.display = has ? '' : 'none';
+  $('gkey').value = '';
+  $('keyNote').replaceChildren(has ? '✓ Đã lưu khoá của bạn trên trình duyệt này.' : [
+    'Server chưa có khoá AI. Tạo khoá miễn phí tại ',
+    el('a', { href: 'https://console.groq.com/keys', target: '_blank', rel: 'noopener noreferrer', text: 'console.groq.com/keys' }),
+    ' rồi dán vào đây. Khoá chỉ lưu trên trình duyệt này, được gửi qua HTTPS để gọi Groq và server không lưu lại.']);
+}
+$('gkeySave').onclick = () => {
+  const v = $('gkey').value.trim();
+  if (!/^gsk_[A-Za-z0-9]{20,120}$/.test(v)) return toast('Khoá phải bắt đầu bằng gsk_');
+  setKey(v); refreshKeyBox(); toast('Đã lưu khoá ✓');
+};
+$('keyDel').onclick = () => { setKey(''); refreshKeyBox(); toast('Đã xoá khoá'); };
+
+function setupAI(d) {
+  $('aiRes').replaceChildren(); $('aiMore').style.display = 'none'; tid = null;
+  $('aiBtn').textContent = d.is_photo ? '✨ Gợi ý caption từ mô tả' : '✨ Phân tích video';
+  $('visBtn').style.display = d.is_photo && d.images.length ? '' : 'none';
+  $('aiNote').textContent = d.is_photo
+    ? 'Bài ảnh không có lời thoại. "AI xem ảnh" nhìn tối đa 3 ảnh (chọn ảnh ở tab Ảnh, mặc định 3 ảnh đầu) để mô tả, đọc chữ và gợi ý caption.'
+    : 'AI nghe lời thoại để phiên âm, tóm tắt, chia chương, gợi ý caption/hashtag. Sau đó có thể dịch phụ đề, chấm hook và hỏi đáp. Mỗi lượt mất khoảng 10–30 giây.';
+  refreshKeyBox();
+}
+function aiFail(ex) {
+  showErr(ex.message);
+  if (ex.code === 'no_key' || ex.code === 'bad_key') { $('keyBox').style.display = ''; $('keyDel').style.display = getKey() ? '' : 'none'; $('gkey').focus(); }
+}
+function speak(text, lang) {
+  if (!('speechSynthesis' in window)) return toast('Trình duyệt không hỗ trợ đọc to');
+  speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(text); u.lang = lang; speechSynthesis.speak(u);
+}
 function box(title, body, copyText, extra) {
   const acts = el('span', { class: 'acts' });
   if (copyText) acts.append(el('button', { class: 'mini', type: 'button', text: 'Sao chép', onclick: () => copy(copyText) }));
   (extra || []).forEach(x => acts.append(x));
   return el('div', { class: 'box' }, el('h4', {}, el('span', { text: title }), acts), body);
 }
-$('aiBtn').onclick = async () => {
-  const b = $('aiBtn'), res = $('aiRes'); b.disabled = true; res.replaceChildren(); showErr('');
-  const status = el('p', { class: 'note', text: cur.is_photo ? '🧠 Đang đọc mô tả…' : '🎧 Đang nghe video… (10–30 giây)' }); res.append(status);
-  try {
-    const t = await post('/api/ai/transcribe', { url: curUrl }); tid = t.tid; status.remove();
-    if (!t.has_speech) { res.append(box('Không có lời thoại', el('p', { text: 'Video này không có lời nói rõ ràng, nên AI không có gì để phiên âm.' }))); return; }
-    const srtBtn = t.srt ? el('button', { class: 'mini', type: 'button', text: '.srt', onclick: () => saveBlob(new Blob([t.srt], { type: 'text/plain' }), 'phude.srt') }) : null;
-    const txtBtn = el('button', { class: 'mini', type: 'button', text: '.txt', onclick: () => saveBlob(new Blob([t.text], { type: 'text/plain' }), 'loithoai.txt') });
-    res.append(box(t.source === 'title' ? '📝 Mô tả bài viết' : '📝 Lời thoại' + (t.lang ? ` (${t.lang})` : ''),
-      el('p', { class: 'scroll', text: t.text }), t.text, [txtBtn, srtBtn].filter(Boolean)));
-    const st2 = el('p', { class: 'note', text: '✨ Đang tóm tắt và nghĩ caption…' }); res.append(st2);
-    const i = await post('/api/ai/insights', { tid, target: $('lang').value }); st2.remove();
-    if (i.summary.length) res.append(box('📌 Tóm tắt', el('ul', {}, i.summary.map(s => el('li', { text: s }))), i.summary.map(s => '• ' + s).join('\n')));
-    if (i.captions.length) res.append(box('💬 Gợi ý caption', el('ul', {}, i.captions.map(s => el('li', { text: s }))), i.captions.join('\n\n')));
-    if (i.hashtags.length) res.append(box('#️⃣ Hashtag', el('div', { class: 'tags' }, i.hashtags.map(h => el('button', { type: 'button', text: h, onclick: () => copy(h) }))), i.hashtags.join(' ')));
-    if (i.translation) res.append(box('🌍 Bản dịch', el('p', { class: 'scroll', text: i.translation }), i.translation));
-    const q = el('input', { type: 'text', maxlength: '300', placeholder: 'Hỏi AI về video này…', 'aria-label': 'Câu hỏi' });
-    const out = el('p', { class: 'note' });
-    const ask = async () => {
-      if (!q.value.trim()) return; out.textContent = '🤔 Đang nghĩ…';
-      try { out.textContent = (await post('/api/ai/ask', { tid, q: q.value })).answer; } catch (ex) { out.textContent = ex.message; }
-    };
-    q.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); ask(); } };
-    res.append(box('🙋 Hỏi đáp', el('div', {}, el('div', { class: 'ask' }, q, el('button', { class: 'btn soft', type: 'button', text: 'Hỏi', onclick: ask })), out)));
-  } catch (ex) { status.remove(); showErr(ex.message); }
-  finally { b.disabled = false; }
-};
+const listBox = (title, items, lang = 'vi-VN') => box(title, el('ul', {}, items.map(s => el('li', { text: s }))), items.join('\n'),
+  [el('button', { class: 'mini', type: 'button', text: '🔊', 'aria-label': 'Đọc to', onclick: () => speak(items.join('. '), lang) })]);
+const tagsBox = tags => box('#️⃣ Hashtag', el('div', { class: 'tags' }, tags.map(h => el('button', { type: 'button', text: h, onclick: () => copy(h) }))), tags.join(' '));
+const note = text => el('p', { class: 'note', text });
+
+async function aiRun(btn, fn) {
+  const res = $('aiRes'); btn.disabled = true; showErr('');
+  try { await fn(res); } catch (ex) { aiFail(ex); } finally { btn.disabled = false; }
+}
+
+$('aiBtn').onclick = () => aiRun($('aiBtn'), async res => {
+  res.replaceChildren(); const st = note(cur.is_photo ? '🧠 Đang đọc mô tả…' : '🎧 Đang nghe video… (10–30 giây)'); res.append(st);
+  const t = await post('/api/ai/transcribe', { url: curUrl }); tid = t.tid; st.remove();
+  if (!t.has_speech) { res.append(box('Không có lời thoại', el('p', { text: 'Video này không có lời nói rõ ràng, nên AI không có gì để phân tích.' }))); return; }
+  const extra = [el('button', { class: 'mini', type: 'button', text: '.txt', onclick: () => saveBlob(new Blob([t.text], { type: 'text/plain' }), 'loithoai.txt') })];
+  if (t.srt) extra.push(el('button', { class: 'mini', type: 'button', text: '.srt', onclick: () => saveBlob(new Blob([t.srt], { type: 'text/plain' }), 'phude.srt') }));
+  res.append(box(t.source === 'title' ? '📝 Mô tả bài viết' : '📝 Lời thoại' + (t.lang ? ` (${t.lang})` : ''), el('p', { class: 'scroll', text: t.text }), t.text, extra));
+  const st2 = note('✨ Đang tóm tắt và chia chương…'); res.append(st2);
+  const i = await post('/api/ai/insights', { tid }); st2.remove();
+  if (i.summary.length) res.append(listBox('📌 Tóm tắt', i.summary));
+  if (i.chapters.length) res.append(listBox('⏱️ Chương', i.chapters.map(c => `${c.time} — ${c.title}`)));
+  if (i.captions.length) res.append(listBox('💬 Gợi ý caption', i.captions));
+  if (i.hashtags.length) res.append(tagsBox(i.hashtags));
+  const q = el('input', { type: 'text', maxlength: '300', placeholder: 'Hỏi AI về video này…', 'aria-label': 'Câu hỏi' });
+  const out = el('p', { class: 'note' });
+  const ask = async () => {
+    if (!q.value.trim()) return; out.textContent = '🤔 Đang nghĩ…';
+    try { out.textContent = (await post('/api/ai/ask', { tid, q: q.value })).answer; } catch (ex) { out.textContent = ex.message; aiFail(ex); }
+  };
+  q.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); ask(); } };
+  res.append(box('🙋 Hỏi đáp', el('div', {}, el('div', { class: 'ask' }, q, el('button', { class: 'btn soft', type: 'button', text: 'Hỏi', onclick: ask })), out)));
+  $('aiMore').style.display = 'flex';
+});
+
+$('trBtn').onclick = () => aiRun($('trBtn'), async res => {
+  const lang = $('lang').value, st = note('🌍 Đang dịch…'); res.prepend(st);
+  const t = await post('/api/ai/translate', { tid, target: lang }); st.remove();
+  const name = $('lang').selectedOptions[0].textContent, extra = [
+    el('button', { class: 'mini', type: 'button', text: '🔊', 'aria-label': 'Đọc to', onclick: () => speak(t.text, LANGTAG[lang] || 'vi-VN') }),
+    el('button', { class: 'mini', type: 'button', text: '.txt', onclick: () => saveBlob(new Blob([t.text], { type: 'text/plain' }), 'ban_dich_' + lang + '.txt') })];
+  if (t.srt) extra.push(el('button', { class: 'mini', type: 'button', text: '.srt', onclick: () => saveBlob(new Blob([t.srt], { type: 'text/plain' }), 'phude_' + lang + '.srt') }));
+  const body = el('div', {}, el('p', { class: 'scroll', text: t.text }));
+  if (t.truncated) body.append(note('Video dài nên chỉ dịch phần đầu (160 dòng).'));
+  res.prepend(box('🌍 Bản dịch · ' + name, body, t.text, extra));
+});
+
+$('ideaBtn').onclick = () => aiRun($('ideaBtn'), async res => {
+  const st = note('💡 Đang phân tích…'); res.prepend(st);
+  const d = await post('/api/ai/ideas', { tid }); st.remove();
+  const h = d.hook, body = el('div', {}, el('p', { text: (h.score ? `Điểm hook: ${h.score}/10. ` : '') + h.feedback }));
+  if (h.better_hooks.length) body.append(el('p', { class: 'note', text: 'Câu mở đầu gợi ý:' }), el('ul', {}, h.better_hooks.map(x => el('li', { text: x }))));
+  if (d.ideas.length) body.append(el('p', { class: 'note', text: 'Ý tưởng video tiếp theo:' }), el('ul', {}, d.ideas.map(i => el('li', { text: i.title + (i.outline ? ': ' + i.outline : '') }))));
+  const text = [h.feedback, ...h.better_hooks, ...d.ideas.map(i => i.title + ': ' + i.outline)].join('\n');
+  res.prepend(box('💡 Hook & ý tưởng', body, text));
+});
+
+$('visBtn').onclick = () => aiRun($('visBtn'), async res => {
+  res.replaceChildren(); const idx = [...selected].sort((a, b) => a - b).map(k => cur.images[k].index).slice(0, 3);
+  res.append(note('👁️ AI đang xem ảnh… (10–30 giây)'));
+  const v = await post('/api/ai/vision', { url: curUrl, indexes: idx }); res.replaceChildren();
+  res.append(note('AI đã xem ảnh số ' + v.images.join(', ')));
+  if (v.description) res.append(box('🖼️ Mô tả', el('p', { text: v.description }), v.description,
+    [el('button', { class: 'mini', type: 'button', text: '🔊', onclick: () => speak(v.description, 'vi-VN') })]));
+  if (v.text_in_images) res.append(box('🔤 Chữ trong ảnh', el('p', { text: v.text_in_images }), v.text_in_images));
+  if (v.alt_texts.length) res.append(listBox('♿ Mô tả thay thế (alt text)', v.alt_texts.map((a, n) => `Ảnh ${v.images[n] || n + 1}: ${a}`)));
+  if (v.captions.length) res.append(listBox('💬 Gợi ý caption', v.captions));
+  if (v.hashtags.length) res.append(tagsBox(v.hashtags));
+});
 </script>
 </body>
 </html>

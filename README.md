@@ -24,7 +24,8 @@ python app.py        # http://127.0.0.1:5000
 | `GROQ_WHISPER_MODEL` | không | mặc định `whisper-large-v3-turbo` |
 | `GROQ_CHAT_MODEL` / `GROQ_CHAT_FALLBACK` | không | mặc định `openai/gpt-oss-120b` / `openai/gpt-oss-20b` |
 | `TIKWM_RELAY` + `RELAY_KEY` | không | Địa chỉ Cloudflare Worker chuyển tiếp (xem `CLOUDFLARE_API.md`) khi tikwm chặn IP Render |
-| `AI_LIMIT` | không | số lượt AI mỗi 10 phút mỗi IP (mặc định 10) |
+| `GROQ_VISION_MODEL` | không | mặc định `qwen/qwen3.8-27b` (AI xem ảnh) |
+| `AI_LIMIT` | không | số lượt AI mỗi 10 phút mỗi IP (mặc định 20) |
 
 4. Health check path: `/health`. Dùng UptimeRobot gọi `/health` mỗi 5 phút để server không ngủ.
 
@@ -38,7 +39,7 @@ Gửi `POST` dạng form (hoặc GET) với `url` và `key`. Chi tiết và các
 | `/api/v1/music` | MP3 |
 | `/api/v1/image` | 1 ảnh. `index=1..N`, `fmt=jpg` |
 | `/api/v1/get` | `type=video\|music\|image\|zip` |
-| `/api/v1/ai` | `task=summary\|caption\|hashtags\|transcript\|srt\|translate`, `lang=vi\|en\|...` |
+| `/api/v1/ai` | `task=summary\|chapters\|caption\|hashtags\|transcript\|srt\|translate\|ideas`, `lang=vi\|en\|...` |
 | `/health` | `ok` |
 
 Mặc định tải **qua server** (ổn định). `mode=redirect` chỉ để thử, có thể gây 403.
@@ -69,3 +70,18 @@ Server tự thử lần lượt: Cloudflare Worker (nếu cấu hình) → giả
 - Server thử lần lượt: tikwm với link gốc → link thật (mở link rút gọn) → đổi `/photo/` thành `/video/` → đọc thẳng trang TikTok → yt-dlp.
 - Nếu server không tải được ảnh (nguồn chặn), trình duyệt tự tải ảnh gốc và nút đổi thành "Mở ảnh gốc" (giữ ảnh → Lưu ảnh).
 - Chẩn đoán: mở `/api/debug?url=LINK_TIKTOK&key=API_KEY` để xem từng nguồn thành công hay lỗi gì (kèm kiểm tra tải thử ảnh đầu tiên).
+
+## AI (Groq)
+**Bật AI:** tab ✨ AI có ô nhập khoá. Tạo khoá miễn phí ở console.groq.com/keys, dán vào ô (lưu trên trình duyệt của bạn, gửi qua HTTPS để gọi Groq, server không lưu). Hoặc đặt `GROQ_API_KEY` trong Render để mọi người dùng chung khoá của bạn.
+
+| Tính năng | Mô tả |
+|---|---|
+| Phiên âm | Lời thoại + tải `.txt` / `.srt` (Whisper) |
+| Tóm tắt, chương, caption, hashtag | Chương theo mốc thời gian cho video dài |
+| Dịch phụ đề | 9 ngôn ngữ, giữ mốc thời gian để tải `.srt` |
+| Ý tưởng & chấm hook | Điểm câu mở đầu, câu mở đầu gợi ý, 3 ý tưởng video tiếp theo |
+| Hỏi đáp | Hỏi về nội dung video |
+| AI xem ảnh (bài ảnh) | Mô tả, đọc chữ trong ảnh, alt text, caption, hashtag (tối đa 3 ảnh) |
+| 🔊 Đọc to | Dùng giọng đọc có sẵn của trình duyệt, miễn phí |
+
+Giới hạn: gói miễn phí Groq có hạn mức yêu cầu/token mỗi phút và mỗi ngày; phiên âm chỉ nhận file tới 24 MB; AI xem ảnh nhận tối đa 3 ảnh. Khi quá hạn mức, giao diện báo "Groq đang giới hạn tốc độ".

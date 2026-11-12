@@ -14,3 +14,7 @@ services:
         generateValue: true   # Render tự sinh khoá, xem trong tab Environment
       - key: GROQ_API_KEY
         sync: false           # tự điền trong Render > Environment, không để trong code
+      - key: OUTBOUND_PROXY
+        sync: false           # (tuỳ chọn) http://user:pass@host:port - proxy IP dân cư nếu tikwm/TikTok chặn IP Render
+      - key: COOKIES_TXT
+        sync: false           # (tuỳ chọn) nội dung cookies.txt để tải Instagram/Facebook/Threads cần đăng nhập

@@ -85,3 +85,30 @@ Server tự thử lần lượt: Cloudflare Worker (nếu cấu hình) → giả
 | 🔊 Đọc to | Dùng giọng đọc có sẵn của trình duyệt, miễn phí |
 
 Giới hạn: gói miễn phí Groq có hạn mức yêu cầu/token mỗi phút và mỗi ngày; phiên âm chỉ nhận file tới 24 MB; AI xem ảnh nhận tối đa 3 ảnh. Khi quá hạn mức, giao diện báo "Groq đang giới hạn tốc độ".
+
+
+## Khi bị "HTTP 403 (tikwm chặn IP máy chủ)" (link ảnh/video đều lỗi)
+
+IP của Render là IP trung tâm dữ liệu nên tikwm/TikTok hay chặn. Thứ tự cách cứu (từ dễ đến chắc):
+
+1. **Tự cứu bằng trình duyệt của bạn (có sẵn, không cần cấu hình):** khi gặp lỗi chặn, web hiện khung "🛟 Máy chủ bị chặn IP".
+   Trình duyệt (IP nhà bạn) tự lấy dữ liệu từ tikwm rồi gửi cho máy chủ (`/api/ingest`). Nếu tikwm không cho trình duyệt gọi chéo (CORS),
+   web hướng dẫn 3 bước: mở dữ liệu → sao chép → dán → "Dùng dữ liệu này". Sau đó ảnh/ZIP/AI dùng bình thường.
+2. **Cloudflare Worker relay** (`CLOUDFLARE_API.md`): đặt `TIKWM_RELAY` và `RELAY_KEY` trong Render > Environment.
+3. **Proxy IP dân cư:** đặt `OUTBOUND_PROXY=http://user:pass@host:port` trong Render > Environment (áp dụng cho tikwm, tải file và yt-dlp).
+4. Phím tắt iPhone gọi tikwm trực tiếp: `PHIM_TAT_TIKWM_TRUC_TIEP.md`.
+
+**AI phiên âm:** ưu tiên nhạc nền (nhẹ nhất) → video tikwm → nếu không có link thì yt-dlp tự tải âm thanh (≤24 MB). Nếu mọi nguồn bị chặn IP,
+lỗi sẽ nói rõ và gợi ý `OUTBOUND_PROXY`.
+
+
+## Hỗ trợ nhiều nền tảng
+
+Dán link Instagram, Facebook (kể cả fb.watch), X/Twitter, Threads, Pinterest, Reddit, Bluesky, Tumblr, Snapchat, Vimeo… vào cùng ô nhập.
+Cách hoạt động: **gallery-dl** lấy ảnh/video của bài (nhiều ảnh hiện thành gallery để chọn + ZIP), **yt-dlp** lấy video chất lượng cao,
+Threads và trang khác dùng thẻ og:image/og:video. Bài ảnh TikTok cũng có thêm gallery-dl làm đường dự phòng.
+API v1 và AI dùng được cho tất cả các link này.
+
+Lưu ý thật: Instagram/Facebook/Threads thường chỉ cho bài công khai, và hay đòi đăng nhập khi gọi từ IP máy chủ.
+Nếu báo lỗi, xuất cookies.txt (định dạng Netscape) từ trình duyệt đã đăng nhập (tiện ích "Get cookies.txt LOCALLY"),
+dán toàn bộ nội dung vào biến môi trường `COOKIES_TXT` trên Render. Dùng tài khoản phụ, không dùng tài khoản chính.

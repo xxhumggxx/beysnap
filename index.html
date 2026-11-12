@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Beysnap · Tải TikTok Giáng sinh</title>
+<title>Beysnap · Tải video & ảnh Giáng sinh</title>
 <meta name="theme-color" content="#e5384f">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -64,6 +64,8 @@
   .btn:disabled { opacity:.55; cursor:progress; }
 
   .alert { display:none; margin-top:14px; padding:12px 16px; border-radius:16px; background:#ffe3e6; color:#9c1c2e; font-weight:500; line-height:1.4; }
+  .rescue { display:none; margin-top:12px; padding:14px 16px; border-radius:16px; background:var(--gold-soft); color:var(--ink); line-height:1.45; }
+  .rescue p { margin:6px 0; } .rescue textarea { width:100%; margin:8px 0; font:inherit; padding:8px; border-radius:12px; border:1px solid #0003; background:#fff8; color:inherit; }
   :root[data-theme="dark"] .alert { background:#4a1f27; color:#ffc7cf; }
   @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .alert { background:#4a1f27; color:#ffc7cf; } }
   .loading { display:none; text-align:center; margin-top:22px; color:var(--muted); }
@@ -148,16 +150,26 @@
 <main>
   <header>
     <h1 class="logo"><span class="hat">🎅</span> <b>Bey</b><em>snap</em> 🎄</h1>
-    <p class="tag">Tải video, ảnh &amp; nhạc TikTok · không watermark · mùa Giáng sinh vui vẻ ✨</p>
+    <p class="tag">Tải video, ảnh &amp; nhạc từ TikTok, Instagram, Facebook, X, Threads, Pinterest, Reddit… ✨</p>
   </header>
 
   <form class="bar" id="form">
-    <input id="url" type="text" inputmode="url" placeholder="Dán link TikTok vào đây…" autocomplete="off" aria-label="Link TikTok" required>
+    <input id="url" type="text" inputmode="url" placeholder="Dán link TikTok / Instagram / Facebook / X / Threads…" autocomplete="off" aria-label="Link bài viết" required>
     <button type="button" class="btn soft" id="pasteBtn">Dán</button>
     <button class="btn go" id="go">Tải 🎁</button>
   </form>
 
   <div class="alert" id="err" role="alert"></div>
+  <div class="rescue" id="rescue">
+    <b>🛟 Máy chủ bị chặn IP – dùng trình duyệt của bạn để cứu</b>
+    <p id="rescueMsg">Đang thử lấy dữ liệu bằng trình duyệt của bạn…</p>
+    <div id="rescueManual" style="display:none">
+      <p>1) Bấm nút mở dữ liệu, 2) chọn hết (Ctrl+A) rồi sao chép, 3) dán vào ô dưới và bấm “Dùng dữ liệu này”.</p>
+      <a class="btn gold" id="probeLink" target="_blank" rel="noopener">Mở dữ liệu tikwm ↗</a>
+      <textarea id="probePaste" rows="3" placeholder='Dán nội dung bắt đầu bằng {"code":0,...'></textarea>
+      <button class="btn go" id="probeUse" type="button">Dùng dữ liệu này</button>
+    </div>
+  </div>
   <div class="loading" id="loading"><span class="bell">🔔</span><div>Đang gói quà cho bạn…</div></div>
 
   <section class="card" id="card" aria-live="polite">
@@ -308,22 +320,46 @@ async function post(path, body) {
   if (path.startsWith('/api/ai/')) { const k = getKey(); if (k) headers['X-Groq-Key'] = k; }
   const r = await fetch(path, { method: 'POST', headers, body: JSON.stringify(body) });
   let d = {}; try { d = await r.json(); } catch {}
-  if (!r.ok) { const e = new Error(d.error || 'Có lỗi xảy ra (' + r.status + ')'); e.code = d.code; throw e; }
+  if (!r.ok) { const e = new Error(d.error || 'Có lỗi xảy ra (' + r.status + ')'); e.code = d.code; e.probe = d.probe; throw e; }
   return d;
 }
 $('form').onsubmit = async e => {
   e.preventDefault(); showErr(''); $('card').style.display = 'none';
   curUrl = extractUrl($('url').value); $('url').value = curUrl; tid = null; selected.clear();
   $('go').disabled = true; $('loading').style.display = 'block';
+  $('rescue').style.display = 'none';
   try { cur = await post('/api/info', { url: curUrl }); render(cur); }
-  catch (ex) { showErr(ex.message); }
+  catch (ex) { showErr(ex.message); if (ex.code === 'blocked') rescue(ex.probe); }
   finally { $('go').disabled = false; $('loading').style.display = 'none'; }
 };
+/* Cứu hộ khi máy chủ bị chặn IP: trình duyệt của bạn (IP nhà) lấy JSON rồi gửi lên /api/ingest */
+async function ingest(url, data) {
+  cur = await post('/api/ingest', { url, data }); showErr(''); $('rescue').style.display = 'none'; render(cur);
+}
+async function rescue(probe) {
+  const box = $('rescue'), msg = $('rescueMsg'), man = $('rescueManual');
+  box.style.display = 'block'; man.style.display = 'none'; msg.textContent = 'Đang thử lấy dữ liệu bằng trình duyệt của bạn…';
+  $('probeLink').href = probe || '#';
+  const myUrl = curUrl;
+  try {
+    const r = await fetch(probe, { mode: 'cors', credentials: 'omit' });
+    const j = await r.json();
+    if (j.code !== 0 || !j.data) throw new Error(j.msg || 'tikwm không trả dữ liệu');
+    await ingest(myUrl, j); return;
+  } catch (ex) {
+    msg.textContent = 'Trình duyệt không tự lấy được (' + (ex.message || 'bị chặn CORS') + '). Làm thủ công 3 bước – chỉ mất vài giây:';
+    man.style.display = 'block';
+  }
+  $('probeUse').onclick = async () => {
+    try { await ingest(myUrl, $('probePaste').value.trim()); }
+    catch (ex) { toast(ex.message); msg.textContent = ex.message; }
+  };
+}
 $('pasteBtn').onclick = async () => {
-  try { $('url').value = extractUrl(await navigator.clipboard.readText()); if (/tiktok\.com/.test($('url').value)) $('form').requestSubmit(); }
+  try { $('url').value = extractUrl(await navigator.clipboard.readText()); if (/(tiktok|instagram|facebook|fb\.watch|x\.com|twitter|threads|pinterest|pin\.it|reddit|bsky|tumblr)/i.test($('url').value)) $('form').requestSubmit(); }
   catch { $('url').focus(); toast('Hãy dán bằng Ctrl+V / giữ để dán'); }
 };
-$('url').addEventListener('paste', () => setTimeout(() => { if (/tiktok\.com/.test($('url').value)) $('form').requestSubmit(); }, 30));
+$('url').addEventListener('paste', () => setTimeout(() => { if (/(tiktok|instagram|facebook|fb\.watch|x\.com|twitter|threads|pinterest|pin\.it|reddit|bsky|tumblr)/i.test($('url').value)) $('form').requestSubmit(); }, 30));
 fetch('/health').catch(() => {}); // đánh thức server sớm
 
 /* ---------- hiển thị kết quả ---------- */

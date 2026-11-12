@@ -1,5 +1,6 @@
 flask>=3.0
 requests>=2.31
 yt-dlp[default,curl-cffi]>=2024.8.6
+gallery-dl>=1.30
 gunicorn>=22.0
 Pillow>=10.0

@@ -14,6 +14,7 @@ import base64
 import copy
 import hashlib
 import hmac
+import html as htmllib
 import io
 import json
 import mimetypes
@@ -22,6 +23,7 @@ import re
 import secrets
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -49,6 +51,7 @@ except Exception:
     cffi = None
 TIKWM_RELAY = os.environ.get("TIKWM_RELAY", "")  # (tuỳ chọn) địa chỉ Cloudflare Worker chuyển tiếp
 RELAY_KEY = os.environ.get("RELAY_KEY", "")
+OUTBOUND_PROXY = os.environ.get("OUTBOUND_PROXY", "")  # (tuỳ chọn) http(s)://user:pass@host:port - IP dân cư để qua chặn
 
 app = Flask(__name__)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
@@ -57,6 +60,26 @@ app.json.ensure_ascii = False
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/124.0 Safari/537.36")
 ALLOWED_HOSTS = ("tiktok.com", "vm.tiktok.com", "vt.tiktok.com")
+OTHER_HOSTS = ("instagram.com", "facebook.com", "fb.watch", "fb.com", "x.com", "twitter.com",
+               "threads.net", "threads.com", "pinterest.com", "pin.it", "reddit.com", "redd.it",
+               "bsky.app", "tumblr.com", "snapchat.com", "likee.video", "imgur.com", "flickr.com",
+               "weibo.com", "xiaohongshu.com", "xhslink.com", "vimeo.com", "dailymotion.com",
+               "soundcloud.com", "twitch.tv")
+SITE_NAMES = (("instagram.com", "Instagram"), ("facebook.com", "Facebook"), ("fb.", "Facebook"),
+              ("x.com", "X"), ("twitter.com", "X"), ("threads.", "Threads"), ("pin", "Pinterest"),
+              ("reddit.com", "Reddit"), ("redd.it", "Reddit"), ("bsky.app", "Bluesky"),
+              ("tumblr.com", "Tumblr"), ("snapchat.com", "Snapchat"), ("tiktok.com", "TikTok"))
+# (tuỳ chọn) nội dung file cookies.txt (định dạng Netscape) để tải bài Instagram/Facebook/Threads cần đăng nhập
+COOKIES_TXT = os.environ.get("COOKIES_TXT", "")
+COOKIE_FILE = ""
+if COOKIES_TXT.strip():
+    try:
+        COOKIE_FILE = os.path.join(tempfile.gettempdir(), "beysnap_cookies.txt")
+        with open(COOKIE_FILE, "w", encoding="utf-8") as _fh:
+            _fh.write(COOKIES_TXT.replace("\\n", "\n"))
+        os.chmod(COOKIE_FILE, 0o600)
+    except OSError:
+        COOKIE_FILE = ""
 TOKEN_TTL = 15 * 60
 CACHE_TTL = 8 * 60
 MAX_AI_BYTES = 24 * 1024 * 1024  # Groq free: 25 MB
@@ -74,6 +97,9 @@ http.cookies.set_policy(DefaultCookiePolicy(allowed_domains=[]))
 _retry = Retry(total=2, backoff_factor=0.3, status_forcelist=(502, 503, 504), allowed_methods=("GET",))
 http.mount("https://", HTTPAdapter(pool_connections=16, pool_maxsize=64, max_retries=_retry))
 http.mount("http://", HTTPAdapter(pool_connections=4, pool_maxsize=16))
+if OUTBOUND_PROXY:
+    http.proxies.update({"http": OUTBOUND_PROXY, "https": OUTBOUND_PROXY})
+CFFI_PROXY = {"proxies": {"http": OUTBOUND_PROXY, "https": OUTBOUND_PROXY}} if OUTBOUND_PROXY else {}
 
 _tokens = {}
 _cache = {}
@@ -89,6 +115,27 @@ def is_tiktok_url(url: str) -> bool:
     except ValueError:
         return False
     return any(host == h or host.endswith("." + h) for h in ALLOWED_HOSTS)
+
+
+def host_match(url, hosts):
+    try:
+        host = (urlparse(url).hostname or "").lower()
+        scheme = urlparse(url).scheme
+    except ValueError:
+        return False
+    return scheme in ("http", "https") and any(host == h or host.endswith("." + h) for h in hosts)
+
+
+def is_supported_url(url):
+    return host_match(url, ALLOWED_HOSTS + OTHER_HOSTS)
+
+
+def site_name(url):
+    host = (urlparse(url).hostname or "").lower()
+    for k, n in SITE_NAMES:
+        if k in host:
+            return n
+    return host.replace("www.", "")
 
 
 def safe_name(text, fallback="tiktok"):
@@ -264,7 +311,7 @@ def fetch_tikwm(url):
     for name, ep, params, headers, use_cffi in tikwm_attempts(url):
         try:
             if use_cffi:
-                r = cffi.get(ep, params=params, headers=headers, impersonate="chrome", timeout=20)
+                r = cffi.get(ep, params=params, headers=headers, impersonate="chrome", timeout=20, **CFFI_PROXY)
             else:
                 r = http.get(ep, params=params, headers=headers, timeout=20)
         except Exception as e:
@@ -288,8 +335,26 @@ def fetch_tikwm(url):
         break
     if not j:
         raise RuntimeError(last)
+    return normalize_tikwm(j["data"])
 
-    d = j["data"]
+
+MEDIA_HOST_SUFFIXES = ("tikwm.com", "tiktokcdn.com", "tiktokcdn-us.com", "tiktokcdn-eu.com", "tiktok.com",
+                       "tiktokv.com", "tiktokv.us", "byteimg.com", "ibytedtos.com", "muscdn.com",
+                       "ibyteimg.com", "bytecdn.com", "tiktokw.us", "tiktokcdn-in.com")
+
+
+def media_url_ok(u):
+    """Chỉ cho tải từ máy chủ TikTok/tikwm (chống SSRF khi dữ liệu do trình duyệt gửi lên)."""
+    try:
+        p = urlparse(u)
+    except ValueError:
+        return False
+    host = (p.hostname or "").lower()
+    return p.scheme == "https" and bool(host) and any(host == h or host.endswith("." + h)
+                                                       for h in MEDIA_HOST_SUFFIXES)
+
+
+def normalize_tikwm(d):
     base = safe_name(d.get("title"), d.get("id", "tiktok"))
     imgs = d.get("images") or []
     videos = []
@@ -335,7 +400,139 @@ def ytdlp_as_data(url):
             "duration": 0, "is_photo": False, "videos": videos, "audio": None, "images": []}
 
 
+# ======================= các nền tảng khác (Instagram, Facebook, X, Threads...) =======================
+IMG_EXT = ("jpg", "jpeg", "png", "webp", "gif", "heic", "avif")
+VID_EXT = ("mp4", "webm", "mov", "m4v")
+
+
+def _first(d, *keys):
+    for k in keys:
+        v = d.get(k) if isinstance(d, dict) else None
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+    return ""
+
+
+def gallerydl_items(url):
+    """gallery-dl chuyên bài nhiều ảnh (Instagram, X, Facebook, Pinterest, Reddit, TikTok ảnh...)."""
+    cmd = [sys.executable, "-m", "gallery_dl", "-j", "--no-input"]
+    if OUTBOUND_PROXY:
+        cmd += ["--proxy", OUTBOUND_PROXY]
+    if COOKIE_FILE:
+        cmd += ["--cookies", COOKIE_FILE]
+    p = subprocess.run(cmd + [url], capture_output=True, text=True, timeout=60)
+    try:
+        rows = json.loads(p.stdout or "[]")
+    except ValueError:
+        rows = []
+    if not rows:
+        tail = (p.stderr or "").strip().splitlines()[-1:] or ["không có kết quả"]
+        raise RuntimeError("gallery-dl: " + tail[0][:200])
+    imgs, vids, meta0 = [], [], {}
+    for row in rows:
+        if not isinstance(row, list) or len(row) < 3 or row[0] != 3 or not isinstance(row[1], str):
+            if isinstance(row, list) and len(row) >= 2 and row[0] == 2 and isinstance(row[1], dict):
+                meta0 = meta0 or row[1]
+            continue
+        u, meta = row[1], row[2] if isinstance(row[2], dict) else {}
+        meta0 = meta0 or meta
+        if not u.startswith("https://"):
+            continue
+        ext = (meta.get("extension") or urlparse(u).path.rsplit(".", 1)[-1]).lower()
+        if ext in IMG_EXT:
+            imgs.append(u)
+        elif ext in VID_EXT:
+            vids.append(u)
+    if not (imgs or vids):
+        err = next((r[1] for r in rows if isinstance(r, list) and len(r) > 1 and r[0] == -1 and isinstance(r[1], dict)), None)
+        raise RuntimeError("gallery-dl: " + (f"{err.get('error')}: {str(err.get('message'))[:150]}" if err
+                                             else "bài này không có ảnh/video tải được"))
+    author = meta0.get("author") or meta0.get("user") or meta0.get("owner") or {}
+    if isinstance(author, dict):
+        author = _first(author, "nick", "name", "username", "full_name")
+    title = _first(meta0, "description", "caption", "content", "title", "text")
+    return {"images": list(dict.fromkeys(imgs))[:40], "videos": list(dict.fromkeys(vids))[:6],
+            "title": title[:200], "author": str(author or ""), "id": str(meta0.get("id") or meta0.get("tweet_id") or "")}
+
+
+def og_items(url):
+    """Dự phòng cuối: đọc thẻ og:image / og:video trên trang công khai (Threads...)."""
+    hdr = {"Accept": "text/html,application/xhtml+xml", "Accept-Language": "en-US,en;q=0.9"}
+    if cffi:
+        r = cffi.get(url, impersonate="chrome", timeout=15, headers=hdr, **CFFI_PROXY)
+    else:
+        r = http.get(url, timeout=15, headers={**hdr, "User-Agent": UA})
+    if r.status_code != 200:
+        raise RuntimeError(f"trang trả HTTP {r.status_code}")
+    page = r.text
+    def metas(prop):
+        out = []
+        for m in re.finditer(r'<meta[^>]+(?:property|name)=["\']%s["\'][^>]*>' % re.escape(prop), page, re.I):
+            c = re.search(r'content=["\']([^"\']+)["\']', m.group(0), re.I)
+            if c:
+                out.append(htmllib.unescape(c.group(1)))
+        return out
+    def good(u):
+        p = urlparse(u)
+        h = (p.hostname or "")
+        return p.scheme == "https" and h and not re.fullmatch(r"[\d.:]+|localhost", h)
+    vids = [u for u in metas("og:video:secure_url") + metas("og:video") if good(u)]
+    imgs = [u for u in metas("og:image") if good(u)]
+    if not (vids or imgs):
+        raise RuntimeError("trang không có ảnh/video công khai (có thể cần đăng nhập)")
+    title = (metas("og:title") or metas("og:description") or [""])[0]
+    return {"images": [] if vids else list(dict.fromkeys(imgs))[:10], "videos": list(dict.fromkeys(vids))[:3],
+            "title": title[:200], "author": "", "id": "", "cover": imgs[0] if imgs else ""}
+
+
+def get_generic(url):
+    key = "gn:" + url
+    data = cache_get(key)
+    if data is not None:
+        return data
+    site = site_name(url)
+    errs, info = [], None
+    try:
+        info = gallerydl_items(url)
+    except Exception as e:
+        errs.append(str(e))
+    yt = None
+    if not (info and info["videos"]):
+        try:
+            yt = ytdlp_as_data(url)
+        except Exception as e:
+            errs.append(f"yt-dlp: {e}")
+    if not info and not yt:
+        try:
+            info = og_items(url)
+        except Exception as e:
+            errs.append(f"trang: {e}")
+    if not info and not yt:
+        raise RuntimeError(f"Không lấy được từ {site}. " + " | ".join(errs)[:400] +
+                           " (bài riêng tư hoặc cần đăng nhập thì đặt COOKIES_TXT trên Render)")
+    info = info or {"images": [], "videos": [], "title": "", "author": "", "id": "", "cover": ""}
+    title = info["title"] or (yt["title"] if yt else "") or site
+    base = safe_name(title, info["id"] or site.lower())
+    videos = list(yt["videos"]) if yt else []
+    for i, u in enumerate(info["videos"], 1):
+        ext = urlparse(u).path.rsplit(".", 1)[-1].lower()
+        videos.append({"label": f"Video {i}" if len(info["videos"]) > 1 else "Video", "quality": "hd" if i == 1 else "sd",
+                       "clean": True, "url": u, "filename": f"{base}_{i}.{ext if ext in VID_EXT else 'mp4'}"})
+    images = [{"index": i, "url": u, "filename": f"{base}_{i:02d}.{ext_from_url(u, 'jpg')}"}
+              for i, u in enumerate(info["images"], 1)]
+    if yt and not yt["videos"] and not images:
+        raise RuntimeError(f"Không tìm thấy media trên {site}")
+    data = {"id": info["id"], "base": base, "title": title, "author": info["author"],
+            "cover": info.get("cover") or (images[0]["url"] if images else ""), "duration": 0,
+            "is_photo": bool(images) and not videos, "videos": videos, "audio": None, "images": images,
+            "site": site}
+    cache_set(key, data)
+    return data
+
+
 def get_tikwm(url):
+    if not host_match(url, ALLOWED_HOSTS):
+        return get_generic(url)
     key = "tw:" + url
     data = cache_get(key)
     if data is not None:
@@ -365,6 +562,18 @@ def get_tikwm(url):
         except Exception as e:
             errs.append(f"trang TikTok: {e}")
             app.logger.warning("Đọc trang TikTok lỗi: %s", e)
+    if data is None and "/photo/" in page_url:
+        try:  # gallery-dl có bộ đọc bài ảnh TikTok riêng
+            g = gallerydl_items(page_url)
+            if g["images"]:
+                base = safe_name(g["title"], g["id"] or "tiktok")
+                data = {"id": g["id"], "base": base, "title": g["title"], "author": g["author"], "cover": "",
+                        "duration": 0, "is_photo": True, "videos": [], "audio": None,
+                        "images": [{"index": i, "url": u, "filename": f"{base}_{i:02d}.{ext_from_url(u, 'jpg')}"}
+                                   for i, u in enumerate(g["images"], 1)]}
+        except Exception as e:
+            errs.append(f"gallery-dl: {e}")
+            app.logger.warning("gallery-dl lỗi: %s", e)
     if data is None:
         try:
             data = ytdlp_as_data(url)
@@ -393,7 +602,7 @@ def pick_videos(data, quality="hd"):
 def fetch_ytdlp(url):
     if yt_dlp is None:
         raise RuntimeError("Chưa cài yt-dlp")
-    with yt_dlp.YoutubeDL({"quiet": True, "skip_download": True, "noplaylist": True}) as ydl:
+    with yt_dlp.YoutubeDL({"quiet": True, "skip_download": True, "noplaylist": True, **({"proxy": OUTBOUND_PROXY} if OUTBOUND_PROXY else {}), **({"cookiefile": COOKIE_FILE} if COOKIE_FILE else {})}) as ydl:
         info = ydl.extract_info(url, download=False)
     base = safe_name(info.get("title"), info.get("id", "tiktok"))
     fmts = [f for f in info.get("formats", [])
@@ -436,7 +645,7 @@ def open_upstream(url):
             last_err = f"{type(e).__name__}: {e}"
     if cffi:  # lớp cuối: giả trình duyệt Chrome
         try:
-            r = cffi.get(url, stream=True, impersonate="chrome", timeout=60, headers={"Referer": first})
+            r = cffi.get(url, stream=True, impersonate="chrome", timeout=60, headers={"Referer": first}, **CFFI_PROXY)
             if r.status_code < 400:
                 return r, None
             last_err = f"HTTP {r.status_code}"
@@ -498,6 +707,10 @@ def download_ytdlp(entry):
     try:
         opts = {"quiet": True, "noplaylist": True, "format": entry["format_id"],
                 "outtmpl": os.path.join(tmp, "v.%(ext)s")}
+        if OUTBOUND_PROXY:
+            opts["proxy"] = OUTBOUND_PROXY
+        if COOKIE_FILE:
+            opts["cookiefile"] = COOKIE_FILE
         with yt_dlp.YoutubeDL(opts) as ydl:
             ydl.download([entry["page"]])
         files = os.listdir(tmp)
@@ -613,8 +826,8 @@ def health():
 def api_info():
     body = request.get_json(silent=True) or {}
     url = (body.get("url") or "").strip()
-    if not is_tiktok_url(url):
-        return jsonify(error="Vui lòng nhập link TikTok hợp lệ (tiktok.com, vm.tiktok.com, vt.tiktok.com)."), 400
+    if not is_supported_url(url):
+        return jsonify(error="Link chưa được hỗ trợ. Dùng link TikTok, Instagram, Facebook, X (Twitter), Threads, Pinterest, Reddit, Bluesky, Tumblr…"), 400
     if not rate_ok("info", 40, 60):
         return jsonify(error="Bạn thao tác quá nhanh, vui lòng đợi một chút rồi thử lại."), 429
 
@@ -624,9 +837,53 @@ def api_info():
     try:
         return jsonify(web_payload(get_tikwm(url)))
     except Exception as tk_err:
-        return jsonify(error=f"Không lấy được media. Nguyên nhân: {tk_err}. "
-                             "Nếu link công khai mà vẫn lỗi, nguồn có thể đang chặn IP máy chủ, "
-                             "hãy thử lại sau ít phút."), 502
+        msg = str(tk_err)
+        blocked = any(k in msg for k in ("chặn IP", "HTTP 403", "HTTP 429", "trang lạ"))
+        out = {"error": f"Không lấy được media. Nguyên nhân: {msg}. "
+                        "Nếu link công khai mà vẫn lỗi, nguồn có thể đang chặn IP máy chủ, "
+                        "hãy thử lại sau ít phút."}
+        if blocked:
+            out["code"] = "blocked"
+            out["probe"] = "https://www.tikwm.com/api/?url=" + quote(url, safe="") + "&hd=1"
+        return jsonify(out), 502
+
+
+@app.post("/api/ingest")
+def api_ingest():
+    """Trình duyệt (IP nhà bạn, không bị chặn) lấy JSON từ tikwm rồi gửi lên đây để dùng tiếp:
+    tải qua máy chủ, ZIP ảnh, AI... Dữ liệu được kiểm tra kỹ, chỉ nhận link của TikTok/tikwm."""
+    if (request.content_length or 0) > 400_000:
+        return jsonify(error="Dữ liệu quá lớn."), 413
+    if not rate_ok("ingest", 30, 60):
+        return jsonify(error="Bạn thao tác quá nhanh, vui lòng đợi một chút rồi thử lại."), 429
+    body = request.get_json(silent=True) or {}
+    url = (body.get("url") or "").strip()
+    raw = body.get("data")
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except ValueError:
+            return jsonify(error="Nội dung dán vào không phải JSON hợp lệ."), 400
+    if not is_tiktok_url(url) or not isinstance(raw, dict):
+        return jsonify(error="Thiếu link TikTok hoặc dữ liệu."), 400
+    d = raw.get("data") if isinstance(raw.get("data"), dict) else raw
+    if raw.get("code") not in (None, 0) and not isinstance(raw.get("data"), dict):
+        return jsonify(error=str(raw.get("msg") or "tikwm báo lỗi")), 400
+    try:
+        data = normalize_tikwm(d)
+    except Exception as e:
+        return jsonify(error=f"Dữ liệu không đúng định dạng tikwm ({e})."), 400
+    urls = [v["url"] for v in data["videos"]] + [i["url"] for i in data["images"]]
+    if data["audio"]:
+        urls.append(data["audio"]["url"])
+    if not urls or not all(media_url_ok(u) for u in urls):
+        return jsonify(error="Dữ liệu chứa link không thuộc TikTok/tikwm nên bị từ chối."), 400
+    if not media_url_ok(data["cover"] or "https://www.tikwm.com/"):
+        data["cover"] = ""
+    cache_set("tw:" + url, data, ttl=30 * 60)
+    for alt in url_candidates(url)[1:]:  # link rút gọn/đã giải mã cũng dùng lại được
+        cache_set("tw:" + alt, data, ttl=30 * 60)
+    return jsonify(web_payload(data))
 
 
 def hq_payload(url):
@@ -696,8 +953,8 @@ def api_fetch():
     if not api_key_ok():
         return None, (jsonify(error="Sai hoặc thiếu key."), 401)
     url = (request.values.get("url") or "").strip()
-    if not is_tiktok_url(url):
-        return None, (jsonify(error="Link TikTok không hợp lệ."), 400)
+    if not is_supported_url(url):
+        return None, (jsonify(error="Link không được hỗ trợ."), 400)
     if not rate_ok("v1", 120, 60):
         return None, (jsonify(error="Quá nhiều yêu cầu, thử lại sau ít phút."), 429)
     try:
@@ -1002,6 +1259,32 @@ def download_for_ai(url):
     return buf.getvalue()
 
 
+def ytdlp_media_bytes(page_url):
+    """Tải bản nhỏ nhất có âm thanh bằng yt-dlp (tối đa 24 MB) để gửi cho Whisper."""
+    if yt_dlp is None:
+        raise RuntimeError("Chưa cài yt-dlp")
+    tmp = tempfile.mkdtemp(prefix="ttai_")
+    try:
+        opts = {"quiet": True, "noplaylist": True, "format": "worstaudio/worst[acodec!=none]/worst",
+                "outtmpl": os.path.join(tmp, "a.%(ext)s"), "max_filesize": MAX_AI_BYTES}
+        if OUTBOUND_PROXY:
+            opts["proxy"] = OUTBOUND_PROXY
+        if COOKIE_FILE:
+            opts["cookiefile"] = COOKIE_FILE
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            ydl.download([page_url])
+        files = os.listdir(tmp)
+        if not files:
+            raise RuntimeError("yt-dlp không tạo ra file (quá 24 MB hoặc bị chặn)")
+        path = os.path.join(tmp, files[0])
+        if os.path.getsize(path) > MAX_AI_BYTES:
+            raise AIError("File lớn hơn 24 MB")
+        with open(path, "rb") as fh:
+            return fh.read(), "media." + (files[0].rsplit(".", 1)[-1] or "mp4")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def srt_time(t):
     ms = int(round(float(t) * 1000))
     h, ms = divmod(ms, 3600000)
@@ -1029,25 +1312,39 @@ def ensure_transcript(url):
     if data["is_photo"]:
         text, source = data["title"], "title"  # bài ảnh không có lời thoại: dùng mô tả
     else:
-        cands = [v for v in pick_videos(data, "sd") if v["quality"] in ("sd", "hd") and v.get("url")]
-        cands = [(c["url"], c["filename"], "video/mp4") for c in cands]
-        if data["audio"]:
+        # thử mọi nguồn có link trực tiếp (nhạc nền nhẹ nhất trước, rồi video nhỏ -> lớn)
+        cands = []
+        if data["audio"] and data["audio"].get("url"):
             cands.append((data["audio"]["url"], data["audio"]["filename"], "audio/mpeg"))
-        last = AIError("Không có file phù hợp để phiên âm")
+        cands += [(c["url"], c["filename"], "video/mp4")
+                  for c in pick_videos(data, "sd") if c.get("url")]
+        last = None
+        got = None
         for cu, fn, mime in cands:
             try:
-                j = groq_transcribe(download_for_ai(cu), fn, mime)
-                text = (j.get("text") or "").strip()
-                segments = [{"start": s.get("start", 0), "end": s.get("end", 0), "text": s.get("text", "")}
-                            for s in (j.get("segments") or [])]
-                lang = j.get("language") or ""
+                got = groq_transcribe(download_for_ai(cu), fn, mime)
                 break
             except AIError as e:
                 last = e
                 if e.code in ("no_key", "bad_key", "rate"):
                     raise
-        else:
-            raise last
+        if got is None:  # lớp cuối: yt-dlp tự tải âm thanh/video nhỏ nhất về máy chủ
+            try:
+                blob, fn = ytdlp_media_bytes(url)
+                got = groq_transcribe(blob, fn, mimetypes.guess_type(fn)[0] or "audio/mp4")
+            except AIError as e:
+                if e.code in ("no_key", "bad_key", "rate"):
+                    raise
+                last = last or e
+            except Exception as e:
+                last = last or AIError("Không tải được âm thanh để phiên âm (" + str(e)[:160] + "). "
+                                       "Nguồn có thể đang chặn IP máy chủ, hãy thử lại sau hoặc đặt OUTBOUND_PROXY.")
+        if got is None:
+            raise last or AIError("Không có file phù hợp để phiên âm")
+        text = (got.get("text") or "").strip()
+        segments = [{"start": s.get("start", 0), "end": s.get("end", 0), "text": s.get("text", "")}
+                    for s in (got.get("segments") or [])]
+        lang = got.get("language") or ""
     rec = {"text": text, "segments": segments, "lang": lang, "source": source, "title": data["title"],
            "has_speech": len(text) >= 8, "insights": None, "ideas": None, "tr": {}, "exp": time.time() + 3600}
     if len(_ai) > 300:
@@ -1181,7 +1478,7 @@ def ai_guard():
 
 def ai_url():
     url = ((request.get_json(silent=True) or {}).get("url") or request.values.get("url") or "").strip()
-    return url if is_tiktok_url(url) else ""
+    return url if is_supported_url(url) else ""
 
 
 def ai_fail(e):
@@ -1313,8 +1610,8 @@ def api_v1_ai():
     url = (request.values.get("url") or "").strip()
     m = re.search(r"https?://[^\s]+", url)
     url = m.group(0) if m else url
-    if not is_tiktok_url(url):
-        return jsonify(error="Link TikTok không hợp lệ."), 400
+    if not is_supported_url(url):
+        return jsonify(error="Link không được hỗ trợ."), 400
     g = ai_guard()
     if g:
         return g

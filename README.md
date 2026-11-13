@@ -112,3 +112,25 @@ API v1 và AI dùng được cho tất cả các link này.
 Lưu ý thật: Instagram/Facebook/Threads thường chỉ cho bài công khai, và hay đòi đăng nhập khi gọi từ IP máy chủ.
 Nếu báo lỗi, xuất cookies.txt (định dạng Netscape) từ trình duyệt đã đăng nhập (tiện ích "Get cookies.txt LOCALLY"),
 dán toàn bộ nội dung vào biến môi trường `COOKIES_TXT` trên Render. Dùng tài khoản phụ, không dùng tài khoản chính.
+
+
+## Cập nhật AI & API (v2)
+
+- Whisper không còn "bịa lời" (ví dụ "Hãy subscribe cho kênh Ghiền Mì Gõ") khi video chỉ có nhạc: các đoạn không phải lời nói bị lọc.
+- Video ít/không có lời thoại: AI cắt 4 khung hình (thư viện `av`, không cần cài ffmpeg) và cho mô hình thị giác xem, nên tóm tắt/caption đúng nội dung.
+- Nút "AI xem video" hoạt động cho cả video; tab AI có đủ tóm tắt, chương, caption, hashtag, hỏi đáp, dịch, ý tưởng.
+- API mới: `/api/v1/links`, `/api/v1/zip`, `/api/v1/text`; `/api/v1/ai` thêm các task `describe`, `ask`, `post`, `comments`, `script`, `all` và `format=text`. Chi tiết và cách dựng phím tắt: `PROMPT_PHIM_TAT_IPHONE.md`.
+- iPhone: sau khi tải xong, chạm nút để mở bảng chia sẻ và chọn "Lưu video"/"Lưu ảnh" vào thư viện Ảnh.
+
+
+## Giao diện mới & chọn ảnh qua API
+
+- Giao diện kiểu "kẹo ngọt": pastel, viền dày như sticker, linh vật dễ thương, tim/sao bay nhẹ, có chế độ tối tự động, nút bấm to dễ chạm trên iPhone.
+- API ảnh nhận `index=2`, `1,3`, `1-3` hoặc `all` (khớp số thứ tự ảnh trong bài); `/api/v1/choices` trả danh sách để hiện "Chọn từ Danh sách" trong Phím tắt. Hướng dẫn từng bước ở cuối `PROMPT_PHIM_TAT_IPHONE.md`.
+
+
+## Tài liệu API: /docs
+
+Mở `https://TEN-APP.onrender.com/docs` (cũng vào được bằng `/api/v1`): trang hướng dẫn đầy đủ có ví dụ curl tự điền địa chỉ + API key của bạn,
+bảng tham số từng endpoint, các task AI, mã lỗi, biến môi trường, hướng dẫn Phím tắt iPhone và nút **Thử ngay** để gọi thử trực tiếp.
+Cần có file `docs.html` nằm cạnh `app.py` trên GitHub.

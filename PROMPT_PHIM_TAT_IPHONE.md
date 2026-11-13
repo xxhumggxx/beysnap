@@ -118,3 +118,88 @@ Giới hạn mặc định: 10 lượt AI mỗi 10 phút cho mỗi mạng.
 | `Quá nhiều yêu cầu` (429) | Gọi quá nhanh | Đợi 1 phút |
 | Ảnh không mở được trong Ảnh | Định dạng webp/heic | Thêm `fmt` = `jpg` ở bước tải ảnh |
 | `AI chưa được bật` (503) | Chưa có `GROQ_API_KEY` trên Render | Thêm biến môi trường rồi deploy lại |
+
+
+---
+
+# Phím tắt nâng cao (bản mới)
+
+Thay `https://TEN-APP.onrender.com` bằng địa chỉ của bạn và `KEY` bằng API_KEY. Tất cả endpoint nhận `url` (link TikTok, Instagram, Facebook, X, Threads, Pinterest…) và `key`.
+Thêm `format=text` ở các endpoint AI để nhận **văn bản thuần**, không cần xử lý JSON.
+
+## Danh sách endpoint
+
+| Endpoint | Việc làm | Tham số thêm |
+|---|---|---|
+| `/api/v1/get` | tải 1 file (tự chọn video/ảnh) | `type=video\|music\|image\|zip`, `index=2`, `quality=hd\|sd\|wm`, `fmt=jpg` |
+| `/api/v1/links` | **mỗi dòng một link tải** (để lưu hết ảnh) | `kind=images\|video\|music\|all` |
+| `/api/v1/zip` | tải tất cả ảnh thành 1 file ZIP | |
+| `/api/v1/text` | tiêu đề/tác giả/số ảnh | `field=title\|author\|type\|count\|all` |
+| `/api/v1/info` | JSON đầy đủ + mọi link | |
+| `/api/v1/ai` | AI | `task=` xem bên dưới, `lang=vi\|en\|ja…`, `format=text` |
+
+Các `task` của AI: `summary` (tóm tắt), `describe` (**AI xem hình trong video** rồi mô tả), `transcript` (lời thoại), `srt` (phụ đề), `translate` (dịch, thêm `lang=`),
+`caption`, `hashtags`, `chapters`, `ideas` (chấm hook + ý tưởng), `post` (viết bài đăng, thêm `platform=tiktok|instagram|facebook|x|threads|youtube`),
+`comments` (5 bình luận gợi ý), `script` (viết lại thành kịch bản 30–45 giây), `ask` (hỏi đáp, thêm `q=câu hỏi`), `all` (gói tất cả).
+
+Video chỉ có nhạc/không có lời: AI tự cắt vài khung hình ra xem, nên `summary`, `caption`… vẫn đúng nội dung (không còn bịa lời như "Ghiền Mì Gõ").
+
+## Phím tắt 1 – Lưu TẤT CẢ ảnh vào thư viện Ảnh
+1. **Nhận văn bản từ Bảng nhớ tạm** (Get Clipboard) hoặc **Nhận URL từ Đầu vào Shortcut**.
+2. **Lấy nội dung của URL**: URL `https://TEN-APP.onrender.com/api/v1/links`, Phương thức **POST**, Nội dung yêu cầu **Biểu mẫu**: `url` = (Clipboard), `key` = KEY, `kind` = `images`.
+3. **Tách văn bản** theo **Dòng mới**.
+4. **Lặp lại với từng mục**: **Lấy nội dung của URL** (mục lặp) → **Lưu vào Album ảnh** (Recents).
+5. (tuỳ chọn) **Hiển thị thông báo** "Đã lưu".
+Muốn chỉ lưu video: đổi `kind` thành `video` (bước 4 vẫn dùng được, chỉ có 1 dòng).
+
+## Phím tắt 2 – Menu AI (tóm tắt, mô tả, caption, dịch…)
+1. **Chọn từ Menu** với các mục: Tóm tắt, Mô tả video, Caption, Hashtag, Dịch, Kịch bản, Bình luận, Viết bài Facebook, Hỏi AI.
+2. Mỗi nhánh **Đặt biến** `task` = `summary` / `describe` / `caption` / `hashtags` / `translate` / `script` / `comments` / `post` / `ask`.
+   - Nhánh "Hỏi AI": thêm **Yêu cầu nhập** (câu hỏi) → biến `q`. Nhánh "Viết bài": biến `platform` = `facebook`.
+3. **Lấy nội dung của URL**: POST `https://TEN-APP.onrender.com/api/v1/ai`, Biểu mẫu: `url`, `key`, `task` (biến), `format` = `text`, và `q`/`platform` nếu có.
+4. **Sao chép vào Bảng nhớ tạm** rồi **Hiển thị kết quả** (Show Result).
+AI chạy mất 10–40 giây với video; nếu hiện "LỖI: …" là lời nhắn thật của server (hết lượt Groq, thiếu GROQ_API_KEY…).
+
+## Phím tắt 3 – Phụ đề tiếng Việt cho video nước ngoài
+`/api/v1/ai` với `task=translate`, `lang=vi`, `format=text` → **Tạo tệp** (đuôi .txt) → **Chia sẻ**. Muốn file phụ đề .srt thì dùng `task=srt` (tiếng gốc).
+
+## Phím tắt 4 – Một chạm: tải xong + viết caption
+Ghép phím tắt 1 hoặc `type=video` với một **Lấy nội dung của URL** tới `/api/v1/ai?task=caption&format=text`, rồi **Sao chép vào Bảng nhớ tạm** để dán thẳng khi đăng.
+
+## Lỗi thường gặp
+- `LỖI: ... Thiếu khoá Groq` → đặt `GROQ_API_KEY` trong Render > Environment.
+- `HTTP 429` → đang gọi quá nhanh hoặc hết lượt Groq miễn phí, đợi vài phút.
+- Link Instagram/Facebook/Threads riêng tư hoặc cần đăng nhập thì không tải được; cookie là tuỳ chọn cuối cùng (`COOKIES_TXT`).
+
+
+---
+
+# Phím tắt "Chọn ảnh số mấy" (1, 2, 3, 4… hoặc nhiều ảnh)
+
+Số thứ tự ảnh trùng với số trên web và trong bài đăng (ảnh 1 là ảnh đầu tiên).
+Tham số `index` dùng được ở `/api/v1/get`, `/api/v1/image`, `/api/v1/zip`, `/api/v1/links`:
+
+| index | Ý nghĩa |
+|---|---|
+| `2` | chỉ ảnh số 2 |
+| `1,3` | ảnh 1 và ảnh 3 |
+| `1-3` | ảnh 1 đến 3 |
+| `all` | tất cả ảnh |
+
+Nếu chọn nhiều ảnh ở `/api/v1/get` hoặc `/api/v1/image`, server trả về một file ZIP chứa đúng các ảnh đó. Muốn lưu thẳng từng ảnh vào thư viện Ảnh thì dùng `/api/v1/links`.
+
+## Cách dựng (7 bước)
+1. **Nhận URL từ Đầu vào Shortcut** hoặc **Lấy Bảng nhớ tạm** → đặt biến `link`.
+2. **Lấy nội dung của URL**: POST `https://TEN-APP.onrender.com/api/v1/choices`, Biểu mẫu `url` = `link`, `key` = KEY.
+   Kết quả là danh sách dòng: `1`, `2`, `3`, `4`, `all` (bài video thì là `video`, `music`).
+3. **Tách văn bản** theo **Dòng mới**.
+4. **Chọn từ Danh sách** (bật **Chọn nhiều**) → bạn tích ảnh 1, 3… hoặc `all`.
+5. **Kết hợp văn bản** các mục đã chọn, dấu phân cách **Tự chỉnh** `,` → đặt biến `chon`.
+6. **Lấy nội dung của URL**: POST `https://TEN-APP.onrender.com/api/v1/links`, Biểu mẫu `url` = `link`, `key` = KEY, `kind` = `images`, `index` = `chon`.
+7. **Tách văn bản** theo **Dòng mới** → **Lặp lại với từng mục**: **Lấy nội dung của URL** (mục lặp) → **Lưu vào Album ảnh**.
+
+Nếu bài là video, bước 4 sẽ hiện `video`/`music`: thêm **Nếu** `chon` là `video` thì gọi `/api/v1/get` với `type=video`, còn `music` thì `type=music` rồi **Lưu vào Tệp**.
+
+## Bản đơn giản: chỉ cần 1 ảnh
+Hỏi số ảnh bằng **Yêu cầu nhập** (kiểu Số) → biến `n` → **Lấy nội dung của URL** POST `/api/v1/get` với `url`, `key`, `type` = `image`, `index` = `n` → **Lưu vào Album ảnh**.
+Thêm `fmt` = `jpg` nếu ảnh gốc là WebP/HEIC mà Ảnh trên iPhone không mở được.

@@ -142,3 +142,10 @@ Cần có file `docs.html` nằm cạnh `app.py` trên GitHub.
 - AI tách âm thanh video thành WAV 16 kHz, tăng âm lượng khi nhỏ, bỏ qua video im lặng, có ô chọn ngôn ngữ lời nói (`speech=`).
 - `/api/v1/links?choice=...` nhận thẳng lựa chọn từ `/api/v1/choices`, tự trả đúng loại, sửa lỗi "Rich Text to URL" trong Phím tắt.
 - `requirements.txt` có thêm `av` (cắt khung hình + tách âm thanh) và `audioop-lts` cho Python 3.13.
+
+
+## v4: log Discord webhook, API tải đáng tin hơn
+
+- `DISCORD_WEBHOOK` (tuỳ chọn): mỗi yêu cầu tải hoặc AI (web lẫn API) gửi một thẻ nhúng về kênh Discord: link, IP, trình duyệt, kết quả/lỗi. Lọc bằng `DISCORD_EVENTS`. Đây là log phía máy chủ, không hiện trong DevTools của người dùng.
+- `GROQ_API_KEY` đặt trong Render dùng chung cho mọi người; ai muốn dùng khoá riêng thì gửi header `X-Groq-Key`.
+- `/api/v1/links` giờ thử mở thật từng file trước khi trả, sửa lỗi Phím tắt báo "Đã lưu" mà không có gì (xem `PROMPT_PHIM_TAT_IPHONE.md`).

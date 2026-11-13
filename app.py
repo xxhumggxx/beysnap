@@ -32,6 +32,7 @@ import unicodedata
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from http.cookiejar import DefaultCookiePolicy
+from datetime import datetime, timezone
 from urllib.parse import quote, urlparse
 
 import requests
@@ -783,6 +784,12 @@ REFERERS = (("twimg.com", "https://x.com/"), ("cdninstagram.com", "https://www.i
             ("tumblr.com", "https://www.tumblr.com/"), ("bsky.network", "https://bsky.app/"))
 
 
+def bad_ctype(r):
+    """Nguồn trả trang HTML/JSON (bị chặn, cần đăng nhập...) chứ không phải file: không được coi là tải thành công."""
+    ct = (r.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+    return ct if (ct.startswith("text/") or ct in ("application/json", "application/xml", "application/xhtml+xml")) else ""
+
+
 def open_upstream(url):
     host = (urlparse(url).hostname or "").lower()
     first = "https://www.tikwm.com/" if host.endswith("tikwm.com") else "https://www.tiktok.com/"
@@ -796,8 +803,12 @@ def open_upstream(url):
         try:
             r = http.get(url, stream=True, timeout=(10, 60), headers=headers)
             if r.status_code < 400:
-                return r, None
-            last_err = f"HTTP {r.status_code}"
+                bad = bad_ctype(r)
+                if not bad:
+                    return r, None
+                last_err = f"nguồn trả {bad} thay vì file"
+            else:
+                last_err = f"HTTP {r.status_code}"
             r.close()
         except requests.RequestException as e:
             last_err = f"{type(e).__name__}: {e}"
@@ -805,8 +816,12 @@ def open_upstream(url):
         try:
             r = cffi.get(url, stream=True, impersonate="chrome", timeout=60, headers={"Referer": first}, **CFFI_PROXY)
             if r.status_code < 400:
-                return r, None
-            last_err = f"HTTP {r.status_code}"
+                bad = bad_ctype(r)
+                if not bad:
+                    return r, None
+                last_err = f"nguồn trả {bad} thay vì file"
+            else:
+                last_err = f"HTTP {r.status_code}"
             r.close()
         except Exception as e:
             last_err = f"{type(e).__name__}: {e}"
@@ -1010,7 +1025,11 @@ def api_info():
         return jsonify(hq_payload(url))
 
     try:
-        return jsonify(web_payload(get_tikwm(url)))
+        data = get_tikwm(url)
+        discord_log("info", 0x57F287, endpoint="/api/info (web)", url=url, ip=client_ip(),
+                   ua=request.headers.get("User-Agent", "")[:200], title=data["title"], author=data["author"],
+                   type="Ảnh" if data["is_photo"] else "Video", so_anh=len(data["images"]) or "", nguon=site_name(url))
+        return jsonify(web_payload(data))
     except Exception as tk_err:
         msg = str(tk_err)
         blocked = any(k in msg for k in ("chặn IP", "HTTP 403", "HTTP 429", "trang lạ"))
@@ -1020,6 +1039,7 @@ def api_info():
         if blocked:
             out["code"] = "blocked"
             out["probe"] = "https://www.tikwm.com/api/?url=" + quote(url, safe="") + "&hd=1"
+        discord_log("error", 0xED4245, endpoint="/api/info (web)", url=url, ip=client_ip(), loi=msg)
         return jsonify(out), 502
 
 
@@ -1058,6 +1078,7 @@ def api_ingest():
     cache_set("tw:" + url, data, ttl=30 * 60)
     for alt in url_candidates(url)[1:]:  # link rút gọn/đã giải mã cũng dùng lại được
         cache_set("tw:" + alt, data, ttl=30 * 60)
+    discord_log("ingest", 0xFEE75C, endpoint="/api/ingest (cứu hộ)", url=url, ip=client_ip(), title=data["title"])
     return jsonify(web_payload(data))
 
 
@@ -1108,6 +1129,10 @@ def api_download():
     except Exception as e:
         app.logger.warning("Lỗi tải (%s): %s", mode, e)
         return jsonify(error=f"Không xử lý được: {e}"), 502
+    if entry.get("jpeg"):  # ảnh WebP/AVIF: đổi sang JPEG để "Lưu vào Ảnh" trên iPhone thật sự lưu được
+        r = to_jpeg_response(entry["url"], entry["filename"])
+        if r is not None:
+            return r
     up, _, errs = open_first([entry["url"]])
     if up is None:
         app.logger.warning("Tải thất bại: %s | %s", errs, entry["url"][:120])
@@ -1116,6 +1141,34 @@ def api_download():
 
 
 # ======================= API cho Phím tắt / script =======================
+DISCORD_WEBHOOK = os.environ.get("DISCORD_WEBHOOK", "")
+DISCORD_EVENTS = set(e.strip() for e in os.environ.get("DISCORD_EVENTS", "info,get,ai,ingest,error").split(",") if e.strip())
+
+
+def client_ip():
+    xf = request.headers.get("X-Forwarded-For", "")
+    return (xf.split(",")[0].strip() if xf else "") or request.remote_addr or "?"
+
+
+def discord_log(event, color=0x5865F2, **fields):
+    """Gửi chi tiết một yêu cầu (link, IP, kết quả...) tới kênh Discord, nếu DISCORD_WEBHOOK được đặt.
+    Đây là log phía máy chủ bình thường: trình duyệt của người dùng không thấy và không gửi gì ra ngoài cả,
+    vì lệnh gọi tới Discord chạy từ máy chủ Render, không nằm trong trang web hay JS gửi cho người dùng."""
+    if not DISCORD_WEBHOOK or event not in DISCORD_EVENTS:
+        return
+    fs = [{"name": k, "value": (str(v).strip()[:1000] or "-"), "inline": len(str(v)) < 36}
+          for k, v in fields.items() if v not in (None, "")]
+
+    def _send():
+        try:
+            http.post(DISCORD_WEBHOOK, timeout=6, json={"embeds": [{
+                "title": f"Beysnap · {event}", "color": color,
+                "timestamp": datetime.now(timezone.utc).isoformat(), "fields": fs[:25]}]})
+        except Exception as e:
+            app.logger.warning("Gửi Discord webhook lỗi: %s", e)
+    threading.Thread(target=_send, daemon=True).start()
+
+
 def api_key_ok():
     expected = os.environ.get("API_KEY", "")
     if not expected:
@@ -1133,8 +1186,13 @@ def api_fetch():
     if not rate_ok("v1", 120, 60):
         return None, (jsonify(error="Quá nhiều yêu cầu, thử lại sau ít phút."), 429)
     try:
-        return get_tikwm(url), None
+        data = get_tikwm(url)
+        discord_log("get", 0x57F287, endpoint=request.path, url=url, ip=client_ip(),
+                   ua=request.headers.get("User-Agent", "")[:200], title=data["title"], author=data["author"],
+                   type="Ảnh" if data["is_photo"] else "Video", so_anh=len(data["images"]) or "", nguon=site_name(url))
+        return data, None
     except Exception as e:
+        discord_log("error", 0xED4245, endpoint=request.path, url=url, ip=client_ip(), loi=str(e))
         return None, (jsonify(error=f"Không lấy được media: {e}"), 502)
 
 
@@ -2025,7 +2083,11 @@ def api_v1_ai():
         _, rec = ensure_transcript(url, task in ("describe", "all") or request.values.get("visual") in ("1", "true"),
                                    request.values.get("speech") or "")
         result = v1_ai_result(task, rec, lang)
+        discord_log("ai", 0xEB459E, endpoint="/api/v1/ai", url=url, ip=client_ip(), task=task,
+                   ua=request.headers.get("User-Agent", "")[:200],
+                   ket_qua=(json.dumps(result, ensure_ascii=False) if isinstance(result, dict) else str(result))[:950])
     except Exception as e:
+        discord_log("error", 0xED4245, endpoint="/api/v1/ai", url=url, ip=client_ip(), task=task, loi=str(e))
         err = ai_fail(e)
         if request.values.get("format") == "text":  # Phím tắt đọc thẳng được lỗi
             return Response("LỖI: " + err[0].get_json()["error"], status=err[1], mimetype="text/plain")
@@ -2040,6 +2102,26 @@ def api_v1_ai():
 @app.route("/api/v1/zip", methods=["GET", "POST"])
 def api_v1_zip():
     return v1_get("zip")
+
+
+def check_link(link):
+    """Thử mở thật từng link (chỉ đọc đầu file) để biết có tải được không. -> (ok, lý do)."""
+    t = link.rsplit("t=", 1)[-1]
+    e = _tokens.get(t)
+    if not e or e.get("mode", "direct") != "direct":
+        return True, ""  # yt-dlp/zip: chỉ biết khi tải
+    try:
+        up, err = open_upstream(e["url"])
+    except Exception as ex:
+        return False, str(ex)[:100]
+    if up is None:
+        return False, err or "không mở được"
+    ct = (up.headers.get("Content-Type") or "").split(";")[0].lower()
+    up.close()
+    if ct in ("image/webp", "image/avif") or e["filename"].lower().endswith((".webp", ".avif")):
+        e["jpeg"] = True
+        e["filename"] = re.sub(r"\.\w+$", "", e["filename"]) + ".jpg"
+    return True, ""
 
 
 @app.route("/api/v1/links", methods=["GET", "POST"])
@@ -2094,6 +2176,17 @@ def api_v1_links():
     if not links:
         # luôn trả văn bản (không phải JSON) để 'Lặp lại với từng mục' không vỡ; dòng này không phải link
         return Response("LỖI: Bài này không có gì để tải với lựa chọn đó.", status=404, mimetype="text/plain; charset=utf-8")
+    if request.values.get("check", "1") not in ("0", "false"):
+        # Thử mở thật từng file: chỉ trả link tải được, nếu không thì nói rõ lý do (tránh "báo đã lưu mà không có gì")
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(6) as ex:
+            res = list(ex.map(check_link, links[:30]))
+        good = [l for l, (ok, _) in zip(links, res) if ok]
+        if not good:
+            why = "; ".join(sorted({r for ok, r in res if not ok}))[:200]
+            return Response(f"LỖI: Không tải được file từ nguồn ({why}). Bài có thể riêng tư, cần đăng nhập hoặc máy chủ bị chặn IP.",
+                            status=502, mimetype="text/plain; charset=utf-8")
+        links = good
     return Response("\n".join(links), mimetype="text/plain; charset=utf-8")
 
 

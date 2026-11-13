@@ -228,3 +228,34 @@ Nếu bạn vẫn dùng nhánh Nếu: ô giá trị của "Otherwise if Selected
 - Server tách âm thanh video thành WAV 16 kHz rồi mới đưa Whisper, tự tăng âm lượng khi tiếng nhỏ, và **bỏ qua Whisper nếu video im lặng/không có tiếng** (không còn câu bịa kiểu "Hãy subscribe cho kênh Ghiền Mì Gõ").
 - Thêm `speech=vi` vào `/api/v1/ai` để Whisper nghe tiếng Việt chuẩn hơn khi có nhạc nền; trên web chọn "Tiếng Việt" ở ô ngôn ngữ cạnh nút Phân tích.
 - Video chỉ có nhạc thì AI xem 4 khung hình để mô tả nội dung.
+
+
+---
+
+# Sửa lỗi: Phím tắt báo "Đã lưu" nhưng thư viện Ảnh không có gì (Facebook…)
+
+**Nguyên nhân:** "Hiển thị thông báo Đã lưu" luôn chạy dù bước tải thất bại. Khi nguồn (Facebook) chặn máy chủ, server từng trả về trang HTML/JSON lỗi với đuôi .jpg; "Lưu vào Album ảnh" nhận file hỏng nên lặng lẽ không lưu gì. Ảnh WebP cũng bị Ảnh trên iPhone bỏ qua.
+
+**Đã sửa ở server (không cần đổi Phím tắt vẫn đỡ hơn):**
+- Server không còn coi trang HTML/JSON là file; nguồn trả sai loại thì báo lỗi thật.
+- `/api/v1/links` mặc định **thử mở từng file trước** và chỉ trả link tải được. Nếu không có file nào tải được, trả HTTP 502 và một dòng bắt đầu bằng `LỖI:` kèm lý do.
+- Ảnh WebP/AVIF tự đổi sang JPEG khi tải.
+
+**Sửa Phím tắt để không báo sai nữa:**
+1. Sau bước **Lấy nội dung của URL** (`/api/v1/links`), thêm **Nếu** `Nội dung của URL` **bắt đầu bằng** `http`.
+2. Trong nhánh **Nếu**: Tách theo dòng mới → Lặp lại → Lấy nội dung của URL → Lưu vào Album ảnh → (sau Kết thúc lặp) **Hiển thị thông báo** "Đã lưu".
+3. Trong nhánh **Nếu không**: **Hiển thị kết quả** (`Nội dung của URL`), đó là lý do thật.
+Đặt thông báo "Đã lưu" **trong nhánh thành công**, không đặt ngoài.
+
+Nếu vẫn lỗi với Facebook: bài thường phải công khai; bài riêng tư/nhóm cần cookie (`COOKIES_TXT`) hoặc `OUTBOUND_PROXY` trên Render.
+
+
+---
+
+# Log về Discord (DISCORD_WEBHOOK) & dùng chung một khoá Groq
+
+**Discord webhook:** tạo ở kênh Discord: Cài đặt kênh → Tích hợp → Webhook → Tạo webhook → Sao chép URL. Dán vào Render → Environment → `DISCORD_WEBHOOK`.
+Mỗi lần có người tải hoặc dùng AI (web lẫn API), kênh đó nhận một thẻ gồm: link, IP, trình duyệt/app, tiêu đề hoặc lỗi. Lọc bớt loại log bằng `DISCORD_EVENTS=get,error` (mặc định gửi cả `info,get,ai,ingest,error`).
+Đây là log phía máy chủ (server gọi Discord trực tiếp, không qua trình duyệt người dùng), nên người dùng không thấy request này khi họ tự kiểm tra mạng trên máy họ — đó là cách Discord webhook hoạt động, không có mẹo che giấu nào thêm. Vì log chứa IP/link thật của người dùng, nếu bạn chia sẻ máy chủ cho người khác dùng thì nên nói rõ điều này với họ.
+
+**Dùng chung một khoá Groq:** đặt `GROQ_API_KEY` trong Render > Environment (đã hỗ trợ sẵn). Mọi người dùng web hoặc API đều dùng được AI mà không cần tự nhập khoá; ai muốn dùng khoá riêng vẫn có thể gửi header `X-Groq-Key` để không dùng chung hạn mức với người khác.

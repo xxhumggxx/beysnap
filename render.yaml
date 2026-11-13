@@ -18,3 +18,7 @@ services:
         sync: false           # (tuỳ chọn) http://user:pass@host:port - proxy IP dân cư nếu tikwm/TikTok chặn IP Render
       - key: COOKIES_TXT
         sync: false           # (tuỳ chọn) nội dung cookies.txt để tải Instagram/Facebook/Threads cần đăng nhập
+      - key: DISCORD_WEBHOOK
+        sync: false           # (tuỳ chọn) link webhook Discord để nhận log mọi yêu cầu (link, IP, kết quả)
+      - key: DISCORD_EVENTS
+        sync: false           # (tuỳ chọn) lọc loại log gửi đi: info,get,ai,ingest,error (mặc định gửi hết)

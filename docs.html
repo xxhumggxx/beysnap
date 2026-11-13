@@ -245,7 +245,10 @@
         <tr><td>OUTBOUND_PROXY</td><td>Proxy <code class="i">http://user:pass@host:port</code> khi nguồn chặn IP Render.</td></tr>
         <tr><td>TIKWM_RELAY / RELAY_KEY</td><td>Địa chỉ và khoá Cloudflare Worker chuyển tiếp tới tikwm.</td></tr>
         <tr><td>COOKIES_TXT</td><td>(tuỳ chọn) cookies.txt định dạng Netscape cho bài cần đăng nhập.</td></tr>
+        <tr><td>DISCORD_WEBHOOK</td><td>(tuỳ chọn) link webhook kênh Discord. Mỗi yêu cầu (web lẫn API) gửi một thẻ nhúng: link, IP, trình duyệt/app, kết quả hoặc lỗi.</td></tr>
+        <tr><td>DISCORD_EVENTS</td><td>(tuỳ chọn) lọc loại log gửi đi, cách nhau bằng dấu phẩy: <code class="i">info</code> (web) · <code class="i">get</code> (API tải) · <code class="i">ai</code> · <code class="i">ingest</code> (cứu hộ) · <code class="i">error</code>. Mặc định gửi cả 5.</td></tr>
       </table></div>
+      <div class="card gold">🔔 <b>Log Discord là log phía máy chủ</b>: lệnh gọi tới Discord chạy trên Render, không nằm trong trang web hay JS trả về trình duyệt, nên người dùng mở DevTools/network tab trên máy họ không thấy request này — không cần và server không làm thêm trò che giấu nào khác. Vì log chứa IP và link người dùng dán vào, hãy nói rõ việc này trong điều khoản/ghi chú sử dụng nếu có người ngoài dùng chung máy chủ của bạn.</div>
     </section>
 
     <footer>Beysnap · chỉ tải nội dung bạn có quyền sử dụng, hãy ghi nguồn khi đăng lại.</footer>
@@ -292,7 +295,7 @@ const EPS = [
     params: [IMG_INDEX], tryParams: [['index', 'text']], ex: { ret: 'application/zip, tên file trong ZIP: 01.jpg, 02.jpg…' } },
   { id: 'links', path: '/api/v1/links', title: 'Danh sách link (mỗi dòng một link)', verbs: 'GET · POST',
     desc: 'Dành cho Phím tắt: tách theo dòng mới rồi “Lặp lại với từng mục” để lưu từng ảnh thẳng vào thư viện Ảnh.',
-    params: [['choice', '**Cách gọn nhất cho Phím tắt**: truyền thẳng lựa chọn lấy từ `/choices`: `video` · `music` · `2` · `1,3` · `all` (có thể ghép: `video,music`). Không cần Nếu/Otherwise'], ['kind', '`auto` (mặc định) · `images` · `video` · `music` · `all`'], IMG_INDEX, ['quality', 'Video: `hd` · `sd` · `wm`'], ['strict', '`1`: chọn sai loại thì báo lỗi. Mặc định server tự trả thứ bài có (vd. bài video mà yêu cầu ảnh thì trả video)']],
+    params: [['choice', '**Cách gọn nhất cho Phím tắt**: truyền thẳng lựa chọn lấy từ `/choices`: `video` · `music` · `2` · `1,3` · `all` (có thể ghép: `video,music`). Không cần Nếu/Otherwise'], ['kind', '`auto` (mặc định) · `images` · `video` · `music` · `all`'], IMG_INDEX, ['quality', 'Video: `hd` · `sd` · `wm`'], ['check', 'Mặc định server thử mở thật từng file và chỉ trả link tải được (ảnh WebP tự đổi sang JPEG). Nếu không file nào tải được: HTTP 502 + dòng “LỖI: …”. `check=0` để tắt'], ['strict', '`1`: chọn sai loại thì báo lỗi. Mặc định server tự trả thứ bài có (vd. bài video mà yêu cầu ảnh thì trả video)']],
     tryParams: [['choice', 'text'], ['kind', ['auto', 'images', 'video', 'music', 'all']], ['index', 'text']],
     ex: { ret: `https://…/api/download?t=AbC…
 https://…/api/download?t=DeF…`, retText: 'Luôn là văn bản thuần. Nếu không có gì để tải: HTTP 404 và một dòng bắt đầu bằng “LỖI:”. Trong Phím tắt hãy kiểm tra dòng bắt đầu bằng http trước khi “Lặp lại với từng mục”.' } },

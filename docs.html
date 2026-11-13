@@ -4,114 +4,110 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Beysnap API · Tài liệu</title>
-<meta name="theme-color" content="#ff5fa8">
+<meta name="theme-color" content="#f5f5f7">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@600;700;800&family=Nunito:wght@500;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
 <style>
   :root {
-    --bg1:#fff3fa; --bg2:#eaf3ff; --card:#ffffff; --ink:#3a2860; --muted:#7a6c9a; --line:#e6dcff;
-    --edge:#3a2860; --pop:#3a2860; --red:#ff5fa8; --red-d:#f0408f; --green:#0f8f68; --green-soft:#d8f8ec;
-    --gold:#ffd35c; --gold-soft:#fff0bf; --lilac:#b9a2ff; --sky:#8fd0ff; --peach:#ffc9b0;
-    --code-bg:#2a1f4a; --code-ink:#f3eaff; --code-key:#ffb3d4; --code-str:#9be8c8; --code-num:#ffd86b;
+    --bg1:#f5f5f7; --bg2:#f5f5f7; --card:#ffffff; --ink:#1d1d1f; --muted:#6e6e73; --line:#e5e5ea; --fill:#f2f2f7;
+    --edge:#d2d2d7; --pop:rgba(0,0,0,.08); --red:#0071e3; --red-d:#0062c4; --green:#1d8a4a; --green-soft:#e6f6ec;
+    --gold:#ff9f0a; --gold-soft:#f5f5f7; --lilac:#0071e3; --sky:#64d2ff; --peach:#ffd8b0;
+    --code-bg:#1d1d1f; --code-ink:#f5f5f7; --code-key:#ff9fcb; --code-str:#8fe3b0; --code-num:#ffd479;
   }
   @media (prefers-color-scheme: dark) {
-    :root:not([data-theme="light"]) { --bg1:#1b1432; --bg2:#10182f; --card:#272046; --ink:#fff0fb; --muted:#b8a9dd; --line:#3a3163;
-      --edge:#6b5bb0; --pop:#0a0716; --red:#ff7ab8; --red-d:#ff93c6; --green:#5ee6b8; --green-soft:#17403a; --gold:#ffd86b; --gold-soft:#4a4020; --code-bg:#150f2b; }
+    :root:not([data-theme="light"]) { --bg1:#000; --bg2:#000; --card:#1c1c1e; --ink:#f5f5f7; --muted:#98989d; --line:#2c2c2e; --fill:#2c2c2e;
+      --edge:#3a3a3c; --pop:rgba(0,0,0,.5); --red:#0a84ff; --red-d:#409cff; --green:#32d74b; --green-soft:#12301b; --gold-soft:#2c2c2e; --code-bg:#111113; }
   }
-  :root[data-theme="dark"] { --bg1:#1b1432; --bg2:#10182f; --card:#272046; --ink:#fff0fb; --muted:#b8a9dd; --line:#3a3163;
-    --edge:#6b5bb0; --pop:#0a0716; --red:#ff7ab8; --red-d:#ff93c6; --green:#5ee6b8; --green-soft:#17403a; --gold:#ffd86b; --gold-soft:#4a4020; --code-bg:#150f2b; }
+  :root[data-theme="dark"] { --bg1:#000; --bg2:#000; --card:#1c1c1e; --ink:#f5f5f7; --muted:#98989d; --line:#2c2c2e; --fill:#2c2c2e;
+    --edge:#3a3a3c; --pop:rgba(0,0,0,.5); --red:#0a84ff; --red-d:#409cff; --green:#32d74b; --green-soft:#12301b; --gold-soft:#2c2c2e; --code-bg:#111113; }
   * { box-sizing:border-box; }
   html { scroll-behavior:smooth; scroll-padding-top:84px; -webkit-text-size-adjust:100%; }
-  body { margin:0; color:var(--ink); font-family:"Nunito",ui-rounded,system-ui,sans-serif; font-weight:600; line-height:1.6;
-    background:linear-gradient(165deg,var(--bg1),var(--bg2)) fixed; overflow-x:hidden; }
-  h1,h2,h3,.btn,.tab { font-family:"Baloo 2","Nunito",ui-rounded,system-ui,sans-serif; }
+  body { margin:0; color:var(--ink); font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","SF Pro Display","Inter","Helvetica Neue",sans-serif; font-weight:400; line-height:1.55; letter-spacing:-.011em; -webkit-font-smoothing:antialiased;
+    background:var(--bg1); overflow-x:hidden; }
+  h1,h2,h3,.btn,.tab { font-family:inherit; letter-spacing:-.025em; }
   code,pre,.mono { font-family:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace; }
-  .blob { position:fixed; border-radius:50%; filter:blur(50px); opacity:.5; pointer-events:none; z-index:0; }
-  .b1 { width:320px; height:320px; background:var(--lilac); left:-90px; top:-60px; }
-  .b2 { width:300px; height:300px; background:var(--peach); right:-90px; top:30%; }
-  :root[data-theme="dark"] .blob { opacity:.25; }
-  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .blob { opacity:.25; } }
-  a { color:var(--red-d); font-weight:800; }
+  .blob { display:none; }
+  a { color:var(--red-d); font-weight:700; }
 
-  .top { position:sticky; top:0; z-index:20; backdrop-filter:blur(10px); background:color-mix(in srgb,var(--bg1) 80%,transparent);
-    border-bottom:2.5px solid var(--edge); }
+  .top { position:sticky; top:0; z-index:20; backdrop-filter:saturate(180%) blur(20px); -webkit-backdrop-filter:saturate(180%) blur(20px); background:color-mix(in srgb,var(--bg1) 72%,transparent);
+    border-bottom:1px solid var(--line); }
   .top .in { max-width:1120px; margin:0 auto; padding:10px 16px; display:flex; align-items:center; gap:12px; }
-  .brand { font-family:"Baloo 2"; font-weight:800; font-size:22px; text-decoration:none; color:var(--ink); display:flex; align-items:center; gap:8px; }
-  .brand i { font-style:normal; background:var(--gold); border:2px solid var(--edge); border-radius:999px; font-size:12px; padding:0 9px; font-family:"Nunito"; }
+  .brand { font-weight:700; font-size:20px; letter-spacing:-.03em; text-decoration:none; color:var(--ink); display:flex; align-items:center; gap:8px; }
+  .brand i { font-style:normal; background:var(--red); color:#fff; border-radius:999px; font-size:11px; padding:1px 9px; font-weight:600; }
   .top .sp { flex:1; }
-  .btn { font-weight:700; font-size:15px; border:2.5px solid var(--edge); cursor:pointer; border-radius:999px; padding:6px 16px; min-height:40px; color:var(--ink);
-    background:var(--card); box-shadow:3px 3px 0 var(--pop); transition:transform .1s, box-shadow .1s; text-decoration:none; display:inline-flex; align-items:center; gap:6px; }
+  .btn { font-weight:500; font-size:15px; border:1px solid var(--edge); cursor:pointer; border-radius:999px; padding:6px 16px; min-height:40px; color:var(--red);
+    background:var(--fill); box-shadow:0 1px 2px rgba(0,0,0,.04), 0 8px 28px rgba(0,0,0,.06); transition:transform .1s, box-shadow .1s; text-decoration:none; display:inline-flex; align-items:center; gap:6px; }
   .btn:active { transform:translate(3px,3px); box-shadow:0 0 0 var(--pop); }
-  .btn.go { background:var(--red); color:#fff; }
-  .btn.soft { background:var(--green-soft); color:var(--green); }
+  .btn.go { background:var(--red); color:#fff; font-weight:600; }
+  .btn.soft { background:var(--fill); color:var(--red); }
   .btn.gold { background:var(--gold-soft); }
   .btn:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, a:focus-visible { outline:3px solid var(--lilac); outline-offset:2px; }
 
   .wrap { position:relative; z-index:2; max-width:1120px; margin:0 auto; padding:26px 16px 70px; display:grid; grid-template-columns:230px minmax(0,1fr); gap:28px; }
   nav.side { position:sticky; top:84px; align-self:start; max-height:calc(100vh - 100px); overflow:auto; padding-right:4px; }
-  nav.side h4 { margin:14px 0 6px; font-size:12px; letter-spacing:.8px; text-transform:uppercase; color:var(--muted); font-family:"Nunito"; font-weight:800; }
+  nav.side h4 { margin:14px 0 6px; font-size:12px; letter-spacing:.8px; text-transform:uppercase; color:var(--muted); font-weight:600; }
   nav.side a { display:block; text-decoration:none; color:var(--ink); padding:5px 12px; border-radius:12px; font-size:14.5px; font-weight:700; border:2px solid transparent; }
-  nav.side a:hover { background:var(--card); border-color:var(--edge); }
-  nav.side a.on { background:var(--lilac); border-color:var(--edge); color:#2b1d52; }
-  nav.side .m { font-size:10.5px; font-weight:800; padding:0 6px; border-radius:6px; margin-right:6px; background:var(--green-soft); color:var(--green); border:1.5px solid var(--edge); font-family:"JetBrains Mono"; }
+  nav.side a:hover { background:var(--fill); }
+  nav.side a.on { background:var(--fill); color:var(--red); }
+  nav.side .m { font-size:10.5px; font-weight:700; padding:0 6px; border-radius:6px; margin-right:6px; background:var(--green-soft); color:var(--green); border:1px solid var(--edge); font-family:"JetBrains Mono"; }
   @media (max-width:860px) {
     .wrap { grid-template-columns:1fr; }
     nav.side { position:static; max-height:none; display:flex; flex-wrap:wrap; gap:6px; }
-    nav.side h4 { display:none; } nav.side a { background:var(--card); border:2px solid var(--edge); padding:3px 12px; }
+    nav.side h4 { display:none; } nav.side a { background:var(--card); border:1px solid var(--edge); padding:3px 12px; }
   }
 
   .hero { text-align:left; margin-bottom:22px; }
-  .hero h1 { font-size:clamp(34px,6vw,50px); line-height:1.05; margin:0 0 8px; font-weight:800;
-    background:linear-gradient(90deg,var(--red),#a77bff 55%,#4fb6ff); -webkit-background-clip:text; background-clip:text; color:transparent; }
+  .hero h1 { font-size:clamp(34px,6vw,50px); line-height:1.05; margin:0 0 8px; font-weight:700;
+    color:var(--ink); }
   .hero p { margin:0; color:var(--muted); font-size:17px; max-width:640px; }
   section { margin-top:34px; }
-  section > h2 { font-size:28px; margin:0 0 10px; font-weight:800; display:flex; align-items:center; gap:10px; }
-  section > h2::before { content:""; width:14px; height:14px; border-radius:50%; background:var(--red); border:2.5px solid var(--edge); flex:none; }
-  h3 { font-size:19px; margin:18px 0 6px; font-weight:800; }
+  section > h2 { font-size:28px; margin:0 0 10px; font-weight:700; display:flex; align-items:center; gap:10px; }
+  
+  h3 { font-size:19px; margin:18px 0 6px; font-weight:700; }
   p { margin:8px 0; }
-  .card { background:var(--card); border:2.5px solid var(--edge); border-radius:24px; box-shadow:5px 5px 0 var(--pop); padding:18px; margin:14px 0; }
-  .card.pink { background:color-mix(in srgb,var(--red) 12%,var(--card)); }
+  .card { background:var(--card); border:1px solid var(--edge); border-radius:24px; box-shadow:0 1px 2px rgba(0,0,0,.04), 0 8px 28px rgba(0,0,0,.06); padding:18px; margin:14px 0; }
+  .card.pink { background:var(--card); }
   .card.gold { background:var(--gold-soft); }
   .grid3 { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:14px; }
   .step { display:flex; gap:12px; align-items:flex-start; }
-  .step b.n { flex:none; width:34px; height:34px; border-radius:50%; background:var(--gold); border:2.5px solid var(--edge); display:grid; place-items:center; font-family:"Baloo 2"; font-size:17px; color:#3a2860; }
+  .step b.n { flex:none; width:32px; height:32px; border-radius:50%; background:var(--red); display:grid; place-items:center; font-size:15px; color:#fff; }
 
   .base { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
-  .base input { flex:1; min-width:220px; font:inherit; font-family:"JetBrains Mono"; font-size:14px; padding:9px 14px; border-radius:999px; border:2.5px solid var(--edge); background:var(--bg1); color:var(--ink); }
-  label.lbl { font-size:13px; font-weight:800; color:var(--muted); display:block; margin:0 0 4px 4px; }
+  .base input { flex:1; min-width:220px; font:inherit; font-family:"JetBrains Mono"; font-size:14px; padding:9px 14px; border-radius:999px; border:1px solid var(--edge); background:var(--bg1); color:var(--ink); }
+  label.lbl { font-size:13px; font-weight:700; color:var(--muted); display:block; margin:0 0 4px 4px; }
 
-  pre { margin:10px 0; background:var(--code-bg); color:var(--code-ink); border:2.5px solid var(--edge); border-radius:18px; padding:14px 16px; overflow:auto; font-size:13.5px; line-height:1.55; position:relative; }
-  pre .cp { position:absolute; top:8px; right:8px; font:inherit; font-family:"Nunito"; font-weight:800; font-size:12px; background:var(--gold); color:#3a2860; border:2px solid var(--edge); border-radius:999px; padding:1px 10px; cursor:pointer; }
-  code.i { background:var(--gold-soft); border:1.5px solid var(--edge); border-radius:8px; padding:0 6px; font-size:.88em; color:var(--ink); }
+  pre { margin:10px 0; background:var(--code-bg); color:var(--code-ink); border:1px solid var(--edge); border-radius:18px; padding:14px 16px; overflow:auto; font-size:13.5px; line-height:1.55; position:relative; }
+  pre .cp { position:absolute; top:8px; right:8px; font:inherit; font-weight:500; font-size:12px; background:rgba(255,255,255,.16); color:#fff; border:0; border-radius:999px; padding:2px 11px; cursor:pointer; }
+  code.i { background:var(--gold-soft); border:1px solid var(--edge); border-radius:8px; padding:0 6px; font-size:.88em; color:var(--ink); }
   .k { color:var(--code-key); } .s { color:var(--code-str); } .nm { color:var(--code-num); } .c { color:#9d8fc7; }
 
   .ep { scroll-margin-top:90px; }
   .ep header { display:flex; flex-wrap:wrap; align-items:center; gap:8px 12px; margin-bottom:6px; }
-  .verb { font-family:"JetBrains Mono"; font-weight:700; font-size:13px; padding:2px 10px; border-radius:999px; background:var(--green-soft); color:var(--green); border:2px solid var(--edge); }
+  .verb { font-family:"JetBrains Mono"; font-weight:700; font-size:12px; padding:2px 10px; border-radius:999px; background:var(--green-soft); color:var(--green); }
   .path { font-family:"JetBrains Mono"; font-weight:700; font-size:16px; word-break:break-all; }
   .ep .desc { margin:4px 0 8px; }
-  table { width:100%; border-collapse:separate; border-spacing:0; font-size:14.5px; margin:8px 0; border:2.5px solid var(--edge); border-radius:16px; overflow:hidden; }
+  table { width:100%; border-collapse:separate; border-spacing:0; font-size:14.5px; margin:8px 0; border:1px solid var(--edge); border-radius:16px; overflow:hidden; }
   th,td { text-align:left; padding:8px 12px; vertical-align:top; border-bottom:1.5px solid var(--line); }
-  th { background:var(--gold-soft); font-family:"Baloo 2"; font-size:14px; }
+  th { background:var(--fill); font-size:13px; font-weight:600; color:var(--muted); }
   tr:last-child td { border-bottom:0; }
   td:first-child { font-family:"JetBrains Mono"; font-weight:700; white-space:nowrap; font-size:13px; }
-  .req { color:var(--red-d); font-weight:800; font-size:12px; margin-left:4px; }
+  .req { color:var(--red-d); font-weight:700; font-size:12px; margin-left:4px; }
   .tablewrap { overflow-x:auto; }
-  .tag { display:inline-block; font-size:12px; font-weight:800; padding:1px 10px; border-radius:999px; border:2px solid var(--edge); background:var(--gold-soft); margin:2px 2px 2px 0; }
+  .tag { display:inline-block; font-size:12px; font-weight:700; padding:1px 10px; border-radius:999px; border:1px solid var(--edge); background:var(--gold-soft); margin:2px 2px 2px 0; }
 
-  details.try { margin-top:10px; border:2.5px dashed var(--edge); border-radius:18px; padding:8px 14px; background:var(--bg1); }
-  details.try summary { cursor:pointer; font-family:"Baloo 2"; font-weight:700; font-size:16px; padding:4px 0; }
+  details.try { margin-top:10px; border:1px dashed var(--edge); border-radius:18px; padding:8px 14px; background:var(--bg1); }
+  details.try summary { cursor:pointer; font-weight:600; font-size:16px; padding:4px 0; }
   .tryform { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:10px; margin:10px 0; }
-  .tryform input,.tryform select { width:100%; font:inherit; font-weight:700; padding:8px 12px; border-radius:14px; border:2.5px solid var(--edge); background:var(--card); color:var(--ink); min-height:42px; }
+  .tryform input,.tryform select { width:100%; font:inherit; font-weight:700; padding:8px 12px; border-radius:14px; border:1px solid var(--edge); background:var(--card); color:var(--ink); min-height:42px; }
   .out { margin-top:10px; }
   .out pre { max-height:340px; }
-  .status { display:inline-block; font-family:"JetBrains Mono"; font-weight:700; font-size:13px; padding:1px 10px; border-radius:999px; border:2px solid var(--edge); background:var(--green-soft); color:var(--green); }
+  .status { display:inline-block; font-family:"JetBrains Mono"; font-weight:700; font-size:13px; padding:1px 10px; border-radius:999px; background:var(--green-soft); color:var(--green); }
   .status.bad { background:#ffe1e8; color:#a01c4c; }
-  .out img { max-width:100%; border-radius:14px; border:2.5px solid var(--edge); }
+  .out img { max-width:100%; border-radius:14px; border:1px solid var(--edge); }
   footer { text-align:center; color:var(--muted); font-size:13px; margin-top:40px; }
   .toast { position:fixed; left:50%; bottom:24px; transform:translateX(-50%) translateY(30px); opacity:0; transition:.25s; z-index:50; background:var(--ink); color:var(--card);
-    padding:10px 18px; border-radius:999px; font-weight:800; border:2.5px solid var(--edge); pointer-events:none; }
+    padding:10px 18px; border-radius:999px; font-weight:700; border:1px solid var(--edge); pointer-events:none; }
   .toast.on { opacity:1; transform:translateX(-50%); }
   @media (prefers-reduced-motion: reduce) { html { scroll-behavior:auto; } }
 </style>
@@ -120,8 +116,8 @@
 <div class="blob b1" aria-hidden="true"></div><div class="blob b2" aria-hidden="true"></div>
 
 <div class="top"><div class="in">
-  <a class="brand" href="/">🐻 Beysnap <i>API</i></a><span class="sp"></span>
-  <a class="btn soft" href="/">← Về trang tải</a>
+  <a class="brand" href="/">Beysnap <i>API</i></a><span class="sp"></span>
+  <a class="btn soft" href="/">‹ Trang tải</a>
 </div></div>
 
 <div class="wrap">
@@ -202,15 +198,16 @@
     <section id="shortcut">
       <h2>Phím tắt iPhone</h2>
       <div class="card">
-        <h3 style="margin-top:0">Lưu ảnh số 1, 2, 3… vào thư viện Ảnh</h3>
+        <h3 style="margin-top:0">Tải video hoặc ảnh số 1, 2, 3… vào thư viện Ảnh (không cần Nếu/Otherwise)</h3>
         <ol style="margin:6px 0;padding-left:22px">
-          <li><b>Lấy Bảng nhớ tạm</b> → đặt biến <code class="i">link</code>.</li>
-          <li><b>Lấy nội dung của URL</b> · POST <code class="i mono" data-tpl="{BASE}/api/v1/choices"></code> · Biểu mẫu: <code class="i">url</code>=link, <code class="i">key</code>.</li>
-          <li><b>Tách văn bản</b> theo dòng mới → <b>Chọn từ Danh sách</b> (bật Chọn nhiều).</li>
+          <li><b>Nhận văn bản từ Đầu vào Shortcut</b> (nếu trống thì Bảng nhớ tạm) → đặt biến <code class="i">link</code>.</li>
+          <li><b>Lấy nội dung của URL</b> · POST <code class="i mono" data-tpl="{BASE}/api/v1/choices"></code> · Biểu mẫu <code class="i">url</code>=link, <code class="i">key</code>.</li>
+          <li><b>Tách văn bản</b> theo dòng mới → <b>Chọn từ Danh sách</b> (bật Chọn nhiều). Video hiện <code class="i">video</code>, <code class="i">music</code>; bài ảnh hiện <code class="i">1 2 3 … all</code>.</li>
           <li><b>Kết hợp văn bản</b> bằng dấu <code class="i">,</code> → biến <code class="i">chon</code>.</li>
-          <li><b>Lấy nội dung của URL</b> · POST <code class="i">/api/v1/links</code> · <code class="i">url</code>, <code class="i">key</code>, <code class="i">kind=images</code>, <code class="i">index=chon</code>.</li>
-          <li><b>Tách văn bản</b> theo dòng mới → <b>Lặp lại với từng mục</b> → <b>Lấy nội dung của URL</b> → <b>Lưu vào Album ảnh</b>.</li>
+          <li><b>Lấy nội dung của URL</b> · POST <code class="i">/api/v1/links</code> · <code class="i">url</code>=link, <code class="i">key</code>, <code class="i">choice</code>=chon.</li>
+          <li><b>Tách văn bản</b> theo dòng mới → <b>Lặp lại với từng mục</b> → <b>Lấy nội dung của URL</b> (mục lặp) → <b>Lưu vào Album ảnh</b>.</li>
         </ol>
+        <div class="card gold" style="margin:10px 0"><b>Lỗi “couldn’t convert from Rich Text to URL”?</b> Nghĩa là một dòng trong “Lặp lại” không phải link (thường là thông báo lỗi). Dùng <code class="i">choice</code> như trên (server tự trả đúng thứ bài có), và bọc bước 6 trong <b>Nếu</b> kết quả bước 5 <b>bắt đầu bằng</b> <code class="i">http</code>. Với nhạc (.mp3) dùng <b>Chia sẻ</b> hoặc <b>Lưu vào Tệp</b>, không dùng “Lưu vào Album ảnh”.</div>
         <h3>Menu AI (tóm tắt, caption, dịch…)</h3>
         <p><b>Chọn từ Menu</b> → đặt biến <code class="i">task</code> → <b>Lấy nội dung của URL</b> POST <code class="i">/api/v1/ai</code> với <code class="i">url</code>, <code class="i">key</code>, <code class="i">task</code>, <code class="i">format=text</code> → <b>Sao chép vào Bảng nhớ tạm</b>.</p>
         <p style="color:var(--muted);font-size:14px">Hướng dẫn đầy đủ từng bước nằm trong file <code class="i">PROMPT_PHIM_TAT_IPHONE.md</code>. Lỗi AI ở chế độ <code class="i">format=text</code> bắt đầu bằng <code class="i">LỖI:</code> nên Phím tắt đọc được ngay.</p>
@@ -251,7 +248,7 @@
       </table></div>
     </section>
 
-    <footer>Beysnap · chỉ tải nội dung bạn có quyền sử dụng, hãy ghi nguồn khi đăng lại 💖</footer>
+    <footer>Beysnap · chỉ tải nội dung bạn có quyền sử dụng, hãy ghi nguồn khi đăng lại.</footer>
   </main>
 </div>
 <div class="toast" id="toast" role="status"></div>
@@ -295,10 +292,10 @@ const EPS = [
     params: [IMG_INDEX], tryParams: [['index', 'text']], ex: { ret: 'application/zip, tên file trong ZIP: 01.jpg, 02.jpg…' } },
   { id: 'links', path: '/api/v1/links', title: 'Danh sách link (mỗi dòng một link)', verbs: 'GET · POST',
     desc: 'Dành cho Phím tắt: tách theo dòng mới rồi “Lặp lại với từng mục” để lưu từng ảnh thẳng vào thư viện Ảnh.',
-    params: [['kind', '`auto` (mặc định) · `images` · `video` · `music` · `all`'], IMG_INDEX, ['quality', 'Video: `hd` · `sd` · `wm`']],
-    tryParams: [['kind', ['auto', 'images', 'video', 'music', 'all']], ['index', 'text']],
+    params: [['choice', '**Cách gọn nhất cho Phím tắt**: truyền thẳng lựa chọn lấy từ `/choices`: `video` · `music` · `2` · `1,3` · `all` (có thể ghép: `video,music`). Không cần Nếu/Otherwise'], ['kind', '`auto` (mặc định) · `images` · `video` · `music` · `all`'], IMG_INDEX, ['quality', 'Video: `hd` · `sd` · `wm`'], ['strict', '`1`: chọn sai loại thì báo lỗi. Mặc định server tự trả thứ bài có (vd. bài video mà yêu cầu ảnh thì trả video)']],
+    tryParams: [['choice', 'text'], ['kind', ['auto', 'images', 'video', 'music', 'all']], ['index', 'text']],
     ex: { ret: `https://…/api/download?t=AbC…
-https://…/api/download?t=DeF…` } },
+https://…/api/download?t=DeF…`, retText: 'Luôn là văn bản thuần. Nếu không có gì để tải: HTTP 404 và một dòng bắt đầu bằng “LỖI:”. Trong Phím tắt hãy kiểm tra dòng bắt đầu bằng http trước khi “Lặp lại với từng mục”.' } },
   { id: 'choices', path: '/api/v1/choices', title: 'Danh sách lựa chọn', verbs: 'GET · POST',
     desc: 'Văn bản mỗi dòng một mục để đưa vào “Chọn từ Danh sách”. Bài ảnh: số thứ tự ảnh và <code class="i">all</code>. Bài video: <code class="i">video</code>, <code class="i">music</code>.',
     params: [], tryParams: [], ex: { ret: `1
@@ -311,12 +308,12 @@ all` } },
   { id: 'ai', path: '/api/v1/ai', title: 'AI', verbs: 'GET · POST',
     desc: 'Tóm tắt, mô tả bằng cách xem hình, phụ đề, dịch, viết bài đăng… Xem bảng task bên dưới.',
     params: [['task', 'Xem mục “Các task AI” (mặc định `summary`)'], ['lang', 'Với translate: `vi` `en` `zh` `ja` `ko` `es` `fr` `th` `id`'], ['q', 'Với `ask`: câu hỏi'],
-      ['platform', 'Với `post`: `tiktok` `instagram` `facebook` `x` `threads` `youtube`'], ['format', '`text` để nhận văn bản thuần; mặc định là JSON'], ['visual', '`1`: ép AI xem khung hình ngay cả khi video có lời']],
-    tryParams: [['task', ['summary', 'describe', 'transcript', 'srt', 'translate', 'caption', 'hashtags', 'chapters', 'ideas', 'post', 'comments', 'script', 'ask', 'all']], ['q', 'text'], ['format', ['text', 'json']]],
+      ['platform', 'Với `post`: `tiktok` `instagram` `facebook` `x` `threads` `youtube`'], ['speech', 'Ngôn ngữ lời nói để Whisper nghe đúng: `vi` `en` `zh` `ja` `ko`… (bỏ trống = tự nhận). Nên đặt `vi` cho video tiếng Việt'], ['format', '`text` để nhận văn bản thuần; mặc định là JSON'], ['visual', '`1`: ép AI xem khung hình ngay cả khi video có lời']],
+    tryParams: [['speech', ['', 'vi', 'en', 'zh', 'ja', 'ko']], ['task', ['summary', 'describe', 'transcript', 'srt', 'translate', 'caption', 'hashtags', 'chapters', 'ideas', 'post', 'comments', 'script', 'ask', 'all']], ['q', 'text'], ['format', ['text', 'json']]],
     ex: { ret: `{ "task": "summary", "lang": "vi",
   "result": "• Hướng dẫn làm bánh bông lan\\n• …" }`, retText: 'Với format=text: chỉ có phần văn bản kết quả (Content-Type text/plain).' } },
 ];
-const noTick = s => esc(s).replace(/`([^`]+)`/g, '<code class="i">$1</code>');
+const noTick = s => esc(s).replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>').replace(/`([^`]+)`/g, '<code class="i">$1</code>');
 
 function render() {
   // mục lục

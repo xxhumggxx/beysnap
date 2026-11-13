@@ -134,3 +134,11 @@ dán toàn bộ nội dung vào biến môi trường `COOKIES_TXT` trên Render
 Mở `https://TEN-APP.onrender.com/docs` (cũng vào được bằng `/api/v1`): trang hướng dẫn đầy đủ có ví dụ curl tự điền địa chỉ + API key của bạn,
 bảng tham số từng endpoint, các task AI, mã lỗi, biến môi trường, hướng dẫn Phím tắt iPhone và nút **Thử ngay** để gọi thử trực tiếp.
 Cần có file `docs.html` nằm cạnh `app.py` trên GitHub.
+
+
+## v3: giao diện kiểu Apple, nghe âm thanh chuẩn hơn, sửa lỗi Phím tắt
+
+- Giao diện mới sạch như Apple: nền xám nhạt, thẻ trắng bo lớn, điều khiển phân đoạn, nút xanh, tự đổi sáng/tối.
+- AI tách âm thanh video thành WAV 16 kHz, tăng âm lượng khi nhỏ, bỏ qua video im lặng, có ô chọn ngôn ngữ lời nói (`speech=`).
+- `/api/v1/links?choice=...` nhận thẳng lựa chọn từ `/api/v1/choices`, tự trả đúng loại, sửa lỗi "Rich Text to URL" trong Phím tắt.
+- `requirements.txt` có thêm `av` (cắt khung hình + tách âm thanh) và `audioop-lts` cho Python 3.13.

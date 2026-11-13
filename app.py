@@ -1290,6 +1290,8 @@ def v1_get(kind):
     if kind == "image":
         imgs = data["images"]
         if not imgs:
+            if request.values.get("strict") not in ("1", "true") and data["videos"]:
+                return v1_get("video")  # chọn nhầm loại: bài là video thì tải video
             return jsonify(error="Bài này không có ảnh, hãy dùng type=video."), 404
         sel = parse_indexes(request.values.get("index") or "1", len(imgs))
         if not sel:
@@ -1413,7 +1415,7 @@ def clean_whisper(j):
             continue
         if sg.get("avg_logprob", 0) < -1.2 or sg.get("compression_ratio", 0) > 2.4:
             continue
-        if HALLU.search(t) and (sg.get("no_speech_prob", 0) > 0.2 or len(t) < 60):
+        if HALLU.search(t) and len(t) < 90:
             continue
         if t.lower() == prev.lower():  # lặp lại y hệt = ảo giác
             continue
@@ -1428,10 +1430,55 @@ def clean_whisper(j):
     return {**j, "segments": keep, "text": text}
 
 
-def groq_transcribe(blob, filename, mime):
-    r = groq_request("/audio/transcriptions", timeout=180, files={"file": (filename, blob, mime)},
-                     data={"model": WHISPER_MODEL, "response_format": "verbose_json", "temperature": "0",
-                           "timestamp_granularities[]": "segment"})
+try:
+    import audioop  # Python <= 3.12 (3.13+: gói audioop-lts)
+except ImportError:
+    audioop = None
+
+
+def extract_wav(blob, max_s=700):
+    """Tách âm thanh video ra WAV 16 kHz mono (đúng định dạng Whisper thích nhất).
+    Trả về (wav_bytes, giây, rms) hoặc (None, 0, 0) nếu video không có tiếng."""
+    import av, wave
+    pcm = bytearray()
+    with av.open(io.BytesIO(blob)) as c:
+        if not c.streams.audio:
+            return None, 0, 0
+        rs = av.AudioResampler(format="s16", layout="mono", rate=16000)
+        for frame in c.decode(audio=0):
+            for f in rs.resample(frame):
+                pcm += bytes(f.planes[0])[: f.samples * 2]
+            if len(pcm) >= max_s * 32000:
+                break
+    if len(pcm) < 3200:
+        return None, 0, 0
+    pcm = bytes(pcm[: len(pcm) // 2 * 2])
+    if audioop:
+        rms, peak = audioop.rms(pcm, 2), audioop.max(pcm, 2)
+    else:
+        from array import array
+        a = array("h"); a.frombytes(pcm)
+        sub = a[::16] or a
+        rms = int((sum(x * x for x in sub) / len(sub)) ** .5)
+        peak = max(abs(x) for x in sub)
+    if rms < 25:  # im lặng hoàn toàn
+        return None, len(pcm) / 32000, rms
+    if audioop and rms < 2500 and peak > 0:  # tiếng nhỏ: nâng âm lượng để Whisper nghe rõ
+        gain = min(10.0, 3000 / rms, 30000 / peak)
+        if gain > 1.2:
+            pcm = audioop.mul(pcm, 2, gain)
+    out = io.BytesIO()
+    with wave.open(out, "wb") as w:
+        w.setnchannels(1); w.setsampwidth(2); w.setframerate(16000); w.writeframes(pcm)
+    return out.getvalue(), len(pcm) / 32000, rms
+
+
+def groq_transcribe(blob, filename, mime, language=""):
+    form = {"model": WHISPER_MODEL, "response_format": "verbose_json", "temperature": "0",
+            "timestamp_granularities[]": "segment"}
+    if re.fullmatch(r"[a-z]{2}", language or ""):
+        form["language"] = language  # chỉ định ngôn ngữ giúp Whisper không đoán sai khi có nhạc nền
+    r = groq_request("/audio/transcriptions", timeout=180, files={"file": (filename, blob, mime)}, data=form)
     return clean_whisper(r.json())
 
 
@@ -1584,19 +1631,30 @@ def describe_visual(frames, title=""):
     return "\n".join(p for p in parts if p), str(j.get("topic") or "")
 
 
-def ensure_transcript(url, want_visual=None):
+def ensure_transcript(url, want_visual=None, speech=""):
     tid = tid_for(url)
     rec = _ai.get(tid)
     if rec and rec["exp"] > time.time() and (not want_visual or rec.get("visual")):
         return tid, rec
     data = get_tikwm(url)
-    text, segments, lang, source, visual, topic, vis_err = "", [], "", "speech", "", "", ""
+    text, segments, lang, source, visual, topic, vis_err, audio_note = "", [], "", "speech", "", "", "", ""
     if data["is_photo"]:
         text, source = data["title"], "title"  # bài ảnh không có lời thoại: dùng mô tả
     else:
         blob, fn = fetch_video_bytes(url, data)
-        got = groq_transcribe(blob, fn, mimetypes.guess_type(fn)[0] or "video/mp4")
+        got, audio_note = {}, ""
+        try:
+            wav, secs, rms = extract_wav(blob)
+        except Exception as e:  # chưa có PyAV hoặc định dạng lạ: gửi nguyên file cho Whisper tự đọc
+            app.logger.warning("extract_wav lỗi, gửi nguyên video: %s", e)
+            wav, secs, rms = blob, 0, -1
+        if wav is None:
+            audio_note = "Video không có tiếng (hoặc hoàn toàn im lặng)."
+        else:
+            got = groq_transcribe(wav, "audio.wav" if rms >= 0 else fn, "audio/wav" if rms >= 0 else "video/mp4", speech)
         text = (got.get("text") or "").strip()
+        if wav is not None and not text:
+            audio_note = "Chỉ có nhạc hoặc tiếng ồn, không có lời nói rõ ràng."
         segments = [{"start": s.get("start", 0), "end": s.get("end", 0), "text": s.get("text", "")}
                     for s in (got.get("segments") or [])]
         lang = got.get("language") or ""
@@ -1614,7 +1672,7 @@ def ensure_transcript(url, want_visual=None):
             except Exception as e:
                 vis_err = f"không cắt được khung hình ({str(e)[:100]})"
     rec = {"text": text, "segments": segments, "lang": lang, "source": source, "title": data["title"],
-           "has_speech": len(text) >= 8, "visual": visual, "topic": topic, "vis_err": vis_err,
+           "has_speech": len(text) >= 8, "audio_note": audio_note, "visual": visual, "topic": topic, "vis_err": vis_err,
            "insights": None, "ideas": None, "tr": {}, "exp": time.time() + 3600}
     if len(_ai) > 300:
         for k in [k for k, v in _ai.items() if v["exp"] < time.time()]:
@@ -1786,12 +1844,14 @@ def ai_transcribe():
     if g:
         return g
     try:
-        tid, rec = ensure_transcript(url, bool((request.get_json(silent=True) or {}).get("visual")))
+        body = request.get_json(silent=True) or {}
+        tid, rec = ensure_transcript(url, bool(body.get("visual")), str(body.get("speech") or ""))
     except Exception as e:
         return ai_fail(e)
     return jsonify({"tid": tid, "text": rec["text"], "lang": rec["lang"], "source": rec["source"],
                     "has_speech": rec["has_speech"], "srt": make_srt(rec["segments"]),
-                    "visual": rec.get("visual", ""), "topic": rec.get("topic", ""), "vis_err": rec.get("vis_err", "")})
+                    "visual": rec.get("visual", ""), "topic": rec.get("topic", ""), "vis_err": rec.get("vis_err", ""),
+                    "audio_note": rec.get("audio_note", "")})
 
 
 def ai_simple(fn):
@@ -1962,7 +2022,8 @@ def api_v1_ai():
         return g
     lang = request.values.get("lang") if request.values.get("lang") in LANG_NAMES else "vi"
     try:
-        _, rec = ensure_transcript(url, task in ("describe", "all") or request.values.get("visual") in ("1", "true"))
+        _, rec = ensure_transcript(url, task in ("describe", "all") or request.values.get("visual") in ("1", "true"),
+                                   request.values.get("speech") or "")
         result = v1_ai_result(task, rec, lang)
     except Exception as e:
         err = ai_fail(e)
@@ -1988,22 +2049,51 @@ def api_v1_links():
     data, err = api_fetch()
     if err:
         return err
-    kind = (request.values.get("kind") or "auto").lower()
-    if kind == "auto":
-        kind = "images" if data["images"] else "video"
+    strict = request.values.get("strict") in ("1", "true")
+    want_video = want_music = False
+    idx_raw = request.values.get("index")
+    choice = (request.values.get("choice") or "").strip().lower()
+    if choice:  # một tham số duy nhất cho Phím tắt: giá trị lấy thẳng từ /api/v1/choices (video, music, 1,3, all)
+        nums = []
+        for t in re.split(r"[,\s;]+", choice):
+            if t in ("video", "hd", "sd"):
+                want_video = True
+            elif t in ("music", "mp3", "nhac", "nhạc"):
+                want_music = True
+            elif t in ("all", "tat ca", "tất cả", "*"):
+                nums = ["all"]
+            elif re.fullmatch(r"\d+(-\d+)?", t) and nums != ["all"]:
+                nums.append(t)
+        idx_raw = ",".join(nums) if nums else ("all" if not (want_video or want_music) else "none")
+        kind = "images" if nums else "none"
+    else:
+        kind = (request.values.get("kind") or "auto").lower()
+        if kind == "auto":
+            kind = "images" if data["images"] else "video"
+        want_video, want_music = kind in ("video", "all"), kind in ("music", "all")
+    want_images = kind in ("images", "all")
     links = []
-    if kind in ("video", "all"):
+    if want_video:
         v = next(iter(pick_videos(data, request.values.get("quality") or "hd")), None)
         if v:
             links.append(abs_link(vtok(v)))
-    if kind in ("images", "all"):
-        sel = parse_indexes(request.values.get("index"), len(data["images"]))
+    if want_images and data["images"]:
+        sel = parse_indexes(idx_raw, len(data["images"]))
         links += [abs_link(make_token(data["images"][n - 1]["filename"], url=data["images"][n - 1]["url"], cache=True))
                   for n in sel]
-    if kind in ("music", "all") and data["audio"]:
+    if want_music and data["audio"]:
         links.append(abs_link(make_token(data["audio"]["filename"], url=data["audio"]["url"])))
+    if not links and not strict:
+        # Phím tắt chọn sai loại (vd. yêu cầu ảnh cho bài video): trả thứ bài đăng thực sự có, đừng trả lỗi
+        if data["images"] and not (want_music and not (want_video or want_images)):
+            links = [abs_link(make_token(i["filename"], url=i["url"], cache=True)) for i in data["images"]]
+        else:
+            v = next(iter(pick_videos(data, "hd")), None)
+            if v:
+                links.append(abs_link(vtok(v)))
     if not links:
-        return jsonify(error="Không có gì để tải với kind này."), 404
+        # luôn trả văn bản (không phải JSON) để 'Lặp lại với từng mục' không vỡ; dòng này không phải link
+        return Response("LỖI: Bài này không có gì để tải với lựa chọn đó.", status=404, mimetype="text/plain; charset=utf-8")
     return Response("\n".join(links), mimetype="text/plain; charset=utf-8")
 
 

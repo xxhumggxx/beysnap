@@ -203,3 +203,28 @@ Nếu bài là video, bước 4 sẽ hiện `video`/`music`: thêm **Nếu** `ch
 ## Bản đơn giản: chỉ cần 1 ảnh
 Hỏi số ảnh bằng **Yêu cầu nhập** (kiểu Số) → biến `n` → **Lấy nội dung của URL** POST `/api/v1/get` với `url`, `key`, `type` = `image`, `index` = `n` → **Lưu vào Album ảnh**.
 Thêm `fmt` = `jpg` nếu ảnh gốc là WebP/HEIC mà Ảnh trên iPhone không mở được.
+
+
+---
+
+# Sửa lỗi "Get Contents of URL failed because Shortcuts couldn't convert from Rich Text to URL"
+
+**Nguyên nhân:** trong bước "Lặp lại với từng mục", một dòng không phải là link (thường là dòng thông báo lỗi do chọn sai loại, ví dụ yêu cầu `kind=images` cho bài video). Shortcuts cố biến chữ đó thành URL nên báo lỗi.
+
+**Đã sửa ở server:** `/api/v1/links` giờ tự trả đúng thứ bài đăng có (bài video mà yêu cầu ảnh thì trả link video), và luôn trả văn bản thuần. Thêm tham số `choice` nhận thẳng giá trị từ `/api/v1/choices`.
+
+**Cách dựng gọn, không cần Nếu/Otherwise (khuyến nghị):**
+1. **Nhận văn bản từ Đầu vào Shortcut** (nếu trống: Bảng nhớ tạm) → biến `link`.
+2. **Lấy nội dung của URL**: POST `https://TEN-APP.onrender.com/api/v1/choices` (Biểu mẫu `url`, `key`).
+3. **Tách văn bản** theo dòng mới → **Chọn từ Danh sách** (bật Chọn nhiều).
+4. **Kết hợp văn bản** bằng `,` → biến `chon`.
+5. **Lấy nội dung của URL**: POST `/api/v1/links` với `url`, `key`, `choice` = `chon`.
+6. **Nếu** kết quả **bắt đầu bằng** `http`: **Tách văn bản** theo dòng mới → **Lặp lại với từng mục** → **Lấy nội dung của URL** (mục lặp) → **Lưu vào Album ảnh**. **Nếu không**: **Hiển thị kết quả** (là thông báo lỗi).
+
+Nếu bạn vẫn dùng nhánh Nếu: ô giá trị của "Otherwise if Selected Item is …" phải điền `music` (trong ảnh bạn gửi ô này đang trống), và các nhánh nên so sánh với đúng chữ thường `video` / `music` mà `/choices` trả về. Nhạc không lưu được bằng "Lưu vào Album ảnh", dùng **Chia sẻ** hoặc **Lưu vào Tệp**.
+
+# AI "nghe" video
+
+- Server tách âm thanh video thành WAV 16 kHz rồi mới đưa Whisper, tự tăng âm lượng khi tiếng nhỏ, và **bỏ qua Whisper nếu video im lặng/không có tiếng** (không còn câu bịa kiểu "Hãy subscribe cho kênh Ghiền Mì Gõ").
+- Thêm `speech=vi` vào `/api/v1/ai` để Whisper nghe tiếng Việt chuẩn hơn khi có nhạc nền; trên web chọn "Tiếng Việt" ở ô ngôn ngữ cạnh nút Phân tích.
+- Video chỉ có nhạc thì AI xem 4 khung hình để mô tả nội dung.

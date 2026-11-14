@@ -21,4 +21,10 @@ services:
       - key: DISCORD_WEBHOOK
         sync: false           # (tuỳ chọn) link webhook Discord để nhận log mọi yêu cầu (link, IP, kết quả)
       - key: DISCORD_EVENTS
-        sync: false           # (tuỳ chọn) lọc loại log gửi đi: info,get,ai,ingest,error (mặc định gửi hết)
+        sync: false           # (tuỳ chọn) lọc loại log gửi đi: info,get,ai,solve,ingest,error,diagnosis (mặc định gửi hết)
+      - key: ERROR_AI
+        value: "1"            # 0 = tắt AI tự chẩn đoán lỗi (vẫn ghi log); cần GROQ_API_KEY + DISCORD_WEBHOOK
+      - key: ERROR_AI_HOURLY
+        value: "6"            # tối đa số lần AI phân tích lỗi mỗi giờ (tiết kiệm hạn mức Groq dùng chung)
+      - key: SOLVE_LIMIT
+        value: "30"           # số bài giải mỗi IP trong 10 phút

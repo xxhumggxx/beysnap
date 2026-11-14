@@ -210,8 +210,25 @@
         <div class="card gold" style="margin:10px 0"><b>Lỗi “couldn’t convert from Rich Text to URL”?</b> Nghĩa là một dòng trong “Lặp lại” không phải link (thường là thông báo lỗi). Dùng <code class="i">choice</code> như trên (server tự trả đúng thứ bài có), và bọc bước 6 trong <b>Nếu</b> kết quả bước 5 <b>bắt đầu bằng</b> <code class="i">http</code>. Với nhạc (.mp3) dùng <b>Chia sẻ</b> hoặc <b>Lưu vào Tệp</b>, không dùng “Lưu vào Album ảnh”.</div>
         <h3>Menu AI (tóm tắt, caption, dịch…)</h3>
         <p><b>Chọn từ Menu</b> → đặt biến <code class="i">task</code> → <b>Lấy nội dung của URL</b> POST <code class="i">/api/v1/ai</code> với <code class="i">url</code>, <code class="i">key</code>, <code class="i">task</code>, <code class="i">format=text</code> → <b>Sao chép vào Bảng nhớ tạm</b>.</p>
+        <h3>Giải bài: chụp màn hình hoặc nhập vào ô</h3>
+        <p><b>Cách A (ảnh)</b>: <b>Chụp ảnh màn hình</b> (hoặc <b>Chọn ảnh</b>) → <b>Chuyển đổi ảnh</b> sang JPEG → <b>Lấy nội dung của URL</b> · POST <code class="i mono" data-tpl="{BASE}/api/v1/solve"></code> · Nội dung yêu cầu <b>Biểu mẫu</b>: <code class="i">key</code>, <code class="i">image</code> (loại <b>Tệp</b> = ảnh ở bước trên), <code class="i">format</code>=<code class="i">text</code> → <b>Hiện kết quả</b>.</p>
+        <p><b>Cách B (ô nhập)</b>: <b>Hỏi nhập liệu</b> (Văn bản, câu hỏi “Nhập đề bài”) → <b>Lấy nội dung của URL</b> · POST cùng địa chỉ với <code class="i">key</code>, <code class="i">text</code> (= Nhập được cung cấp), <code class="i">format</code>=<code class="i">text</code> → <b>Hiện kết quả</b>.</p>
+        <p><b>Gộp cả hai</b>: <b>Chọn từ Menu</b> (Ảnh chụp màn hình / Nhập chữ) rồi chạy nhánh tương ứng; hoặc gửi cả <code class="i">image</code> lẫn <code class="i">text</code> (vd “giải câu 3”). Muốn chỉ có đáp án để <b>Hiện thông báo</b> hoặc <b>Đọc to</b>: thêm <code class="i">part=answer</code> thay cho <code class="i">format=text</code>. Thêm <code class="i">mode=hint</code> khi bạn muốn tự làm và chỉ cần gợi ý.</p>
         <p style="color:var(--muted);font-size:14px">Hướng dẫn đầy đủ từng bước nằm trong file <code class="i">PROMPT_PHIM_TAT_IPHONE.md</code>. Lỗi AI ở chế độ <code class="i">format=text</code> bắt đầu bằng <code class="i">LỖI:</code> nên Phím tắt đọc được ngay.</p>
       </div>
+    </section>
+
+    <section id="diag">
+      <h2>Log lỗi &amp; AI chẩn đoán</h2>
+      <div class="card">
+        <ol style="margin:0;padding-left:22px">
+          <li>Mọi lỗi server (nguồn chặn IP, tải thất bại, AI lỗi, lỗi chưa bắt) được ghi vào bộ nhớ và file tạm, <b>đã xoá khoá/mật khẩu/proxy</b>, rồi gửi thẻ <code class="i">error</code> lên Discord.</li>
+          <li>Lỗi lặp lại chỉ tăng bộ đếm. Lỗi do người dùng (thiếu khoá, nhập sai, quá hạn mức) không được ghi.</li>
+          <li>Khi có <code class="i">GROQ_API_KEY</code> + <code class="i">DISCORD_WEBHOOK</code>, với mỗi lỗi mới, AI làm 2 bước: xem <b>mục lục toàn bộ mã nguồn</b> để chọn hàm cần đọc, rồi đọc các hàm đó cùng traceback và gửi thẻ <code class="i">diagnosis</code> lên Discord: nguyên nhân, loại lỗi, cách xử lý (kèm tên biến môi trường cần đặt), đoạn sửa code, cách kiểm tra lại.</li>
+          <li>Giới hạn để không ngốn hạn mức Groq dùng chung: cùng một lỗi tối đa 1 lần/15 phút, tối đa 6 lần phân tích/giờ. Có thể gọi tay: <code class="i mono" data-tpl="{BASE}/api/v1/errors?key={KEY}&amp;analyze=1&amp;format=text"></code>.</li>
+        </ol>
+      </div>
+      <div class="card gold">🔎 <b>Minh bạch</b>: để phân tích, các hàm liên quan trong <code class="i">app.py</code> và traceback (đã xoá bí mật) được gửi tới Groq. AI chỉ nhận mã của chính ứng dụng này và không có công cụ để chạy gì. Tắt hoàn toàn bằng <code class="i">ERROR_AI=0</code>. Dữ liệu lỗi lưu trong bộ nhớ/file tạm nên mất khi Render khởi động lại (Render gói miễn phí ngủ sau 15 phút không dùng); bản lưu lâu dài là kênh Discord. Chẩn đoán của AI là gợi ý, hãy đọc trước khi sửa.</div>
     </section>
 
     <section id="errors">
@@ -246,7 +263,12 @@
         <tr><td>TIKWM_RELAY / RELAY_KEY</td><td>Địa chỉ và khoá Cloudflare Worker chuyển tiếp tới tikwm.</td></tr>
         <tr><td>COOKIES_TXT</td><td>(tuỳ chọn) cookies.txt định dạng Netscape cho bài cần đăng nhập.</td></tr>
         <tr><td>DISCORD_WEBHOOK</td><td>(tuỳ chọn) link webhook kênh Discord. Mỗi yêu cầu (web lẫn API) gửi một thẻ nhúng: link, IP, trình duyệt/app, kết quả hoặc lỗi.</td></tr>
-        <tr><td>DISCORD_EVENTS</td><td>(tuỳ chọn) lọc loại log gửi đi, cách nhau bằng dấu phẩy: <code class="i">info</code> (web) · <code class="i">get</code> (API tải) · <code class="i">ai</code> · <code class="i">ingest</code> (cứu hộ) · <code class="i">error</code>. Mặc định gửi cả 5.</td></tr>
+        <tr><td>DISCORD_EVENTS</td><td>(tuỳ chọn) lọc loại log gửi đi, cách nhau bằng dấu phẩy: <code class="i">info</code> (web) · <code class="i">get</code> (API tải) · <code class="i">ai</code> · <code class="i">ingest</code> (cứu hộ) · <code class="i">solve</code> (giải bài) · <code class="i">error</code> · <code class="i">diagnosis</code> (AI phân tích lỗi). Mặc định gửi cả 7.</td></tr>
+        <tr><td>DISCORD_PER_MIN</td><td>Số thẻ Discord tối đa mỗi phút (mặc định 25). Vượt thì bỏ bớt và báo số đã bỏ ở thẻ sau.</td></tr>
+        <tr><td>ERROR_AI</td><td><code class="i">0</code> để tắt AI tự chẩn đoán lỗi (vẫn ghi log). Mặc định bật khi có cả <code class="i">GROQ_API_KEY</code> và <code class="i">DISCORD_WEBHOOK</code>.</td></tr>
+        <tr><td>ERROR_AI_COOLDOWN / ERROR_AI_HOURLY</td><td>Giây chờ trước khi phân tích lại cùng một lỗi (mặc định 900) · số lần AI phân tích tối đa mỗi giờ (mặc định 6).</td></tr>
+        <tr><td>ERROR_LOG_FILE</td><td>(tuỳ chọn) đường dẫn file JSONL lưu lỗi. Mặc định nằm trong thư mục tạm.</td></tr>
+        <tr><td>SOLVE_LIMIT</td><td>Số bài giải mỗi IP trong 10 phút (mặc định 30).</td></tr>
       </table></div>
       <div class="card gold">🔔 <b>Log Discord là log phía máy chủ</b>: lệnh gọi tới Discord chạy trên Render, không nằm trong trang web hay JS trả về trình duyệt, nên người dùng mở DevTools/network tab trên máy họ không thấy request này — không cần và server không làm thêm trò che giấu nào khác. Vì log chứa IP và link người dùng dán vào, hãy nói rõ việc này trong điều khoản/ghi chú sử dụng nếu có người ngoài dùng chung máy chủ của bạn.</div>
     </section>
@@ -315,6 +337,44 @@ all` } },
     tryParams: [['speech', ['', 'vi', 'en', 'zh', 'ja', 'ko']], ['task', ['summary', 'describe', 'transcript', 'srt', 'translate', 'caption', 'hashtags', 'chapters', 'ideas', 'post', 'comments', 'script', 'ask', 'all']], ['q', 'text'], ['format', ['text', 'json']]],
     ex: { ret: `{ "task": "summary", "lang": "vi",
   "result": "• Hướng dẫn làm bánh bông lan\\n• …" }`, retText: 'Với format=text: chỉ có phần văn bản kết quả (Content-Type text/plain).' } },
+  { id: 'solve', path: '/api/v1/solve', title: 'Giải bài bằng AI (ảnh chụp màn hình hoặc chữ)', verbs: 'GET · POST', noUrl: true, file: true,
+    desc: 'Gửi <b>ảnh chụp màn hình</b> đề bài và/hoặc <b>chữ</b> nhập từ ô hỏi của Phím tắt. AI đọc ảnh, chép lại đề (để bạn kiểm tra), rồi giải và tự kiểm tra phép tính. Không cần link. Bài ảnh được nén tự động, hỗ trợ PNG/JPEG/WebP/HEIC.',
+    params: [['text', 'Đề bài dạng chữ (tối đa 8000 ký tự). Gửi kèm ảnh thì là yêu cầu thêm, vd “giải câu 3”. Với `mode=check` là bài làm của bạn'],
+      ['image', 'Ảnh đề bài: tải lên dạng **Biểu mẫu → Tệp** (tên trường tuỳ ý, tối đa 3 ảnh), hoặc `image_b64` (base64), hoặc gửi thẳng file ảnh làm body'],
+      ['mode', '`full` (mặc định: đáp án + từng bước) · `answer` (chỉ đáp án) · `explain` (giảng như dạy học) · `hint` (chỉ gợi ý, không cho đáp án) · `check` (chấm bài làm của bạn)'],
+      ['subject', '`auto` (mặc định) · `math` `physics` `chemistry` `biology` `code` `english` `literature` `history` `geography` `economics` `other`'],
+      ['level', 'Trình độ để giải thích phù hợp, vd `lớp 9`, `đại học`'], ['lang', 'Ngôn ngữ trả lời: `vi` (mặc định) `en` `zh` `ja` `ko` `es` `fr` `th` `id`'],
+      ['think', '`low` · `medium` (mặc định) · `high`: suy nghĩ kỹ hơn cho bài khó (chậm hơn, tốn hạn mức hơn)'],
+      ['format', '`text`: trả văn bản đã định dạng sẵn để Hiện kết quả/Đọc to'], ['part', '`answer` · `steps` · `question` · `note` · `subject`: chỉ trả đúng một phần, dạng chữ (hợp với Hiện thông báo)'],
+      ['show_question', '`1`/`0`: có kèm đề AI đọc được không. Mặc định có khi gửi ảnh, để bạn kiểm tra AI đọc đúng chưa']],
+    tryParams: [['text', 'text'], ['mode', ['full', 'answer', 'explain', 'hint', 'check']], ['subject', ['auto', 'math', 'physics', 'chemistry', 'biology', 'code', 'english', 'literature', 'history', 'geography', 'economics', 'other']], ['level', 'text'], ['think', ['medium', 'low', 'high']], ['format', ['text', 'json']]],
+    curl: `# Ảnh chụp màn hình
+curl -X POST '{BASE}/api/v1/solve' \\
+  -F 'key={KEY}' \\
+  -F 'image=@dethi.png' \\
+  -F 'mode=full' -F 'format=text'
+
+# Chữ nhập vào
+curl -G '{BASE}/api/v1/solve' \\
+  --data-urlencode 'key={KEY}' \\
+  --data-urlencode 'text=Giải phương trình 2x+3=11' \\
+  --data-urlencode 'part=answer'`,
+    ex: { ret: `{ "mode": "full", "subject": "Toán", "from_image": true,
+  "question": "2x + 3 = 11",
+  "answer": "x = 4",
+  "steps": "1. 2x = 11 - 3 = 8\\n2. x = 8 / 2 = 4",
+  "note": "",
+  "text": "📝 Đề: 2x + 3 = 11\\n\\n✅ Đáp án: x = 4\\n\\n📖 Cách giải:\\n1. …" }`,
+      retText: 'Lỗi (400 thiếu đề/ảnh hỏng · 422 AI không đọc được đề trong ảnh · 429 hết lượt · 502 lỗi AI): JSON {"error","code"}, hoặc dòng “LỖI: …” khi dùng format=text hay part.' } },
+  { id: 'errors-api', path: '/api/v1/errors', title: 'Log lỗi &amp; AI chẩn đoán', verbs: 'GET · POST', noUrl: true,
+    desc: 'Xem các lỗi server vừa ghi nhận (chỉ khi đã đặt <code class="i">API_KEY</code>). Mỗi lỗi có traceback đã xoá khoá/mật khẩu, số lần lặp lại và (nếu có) chẩn đoán của AI.',
+    params: [['id', 'Số thứ tự lỗi để xem chi tiết (kèm traceback và chẩn đoán)'], ['analyze', '`1`: nhờ AI đọc lỗi + đoạn mã liên quan rồi trả hướng xử lý (không có `id` thì lấy lỗi mới nhất). Lỗi đã được chẩn đoán thì trả bản đã lưu'],
+      ['force', '`1` cùng `analyze=1`: chẩn đoán lại'], ['limit', 'Số lỗi tối đa khi liệt kê (mặc định 20)'], ['format', '`text` để nhận văn bản thuần']],
+    tryParams: [['id', 'text'], ['analyze', ['', '1']], ['format', ['text', 'json']]],
+    ex: { ret: `{ "total": 3, "errors": [
+  { "id": 3, "time": "14/11 07:31:02", "where": "/api/v1/info",
+    "type": "RuntimeError", "msg": "tikwm HTTP 403 chặn IP", "count": 5, "diagnosed": true }
+] }`, retText: 'Chưa đặt API_KEY: 403. Sai key: 401. Dữ liệu nằm trong bộ nhớ và file tạm của server, mất khi Render khởi động lại; bản lưu lâu dài là kênh Discord.' } },
 ];
 const noTick = s => esc(s).replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>').replace(/`([^`]+)`/g, '<code class="i">$1</code>');
 
@@ -324,17 +384,17 @@ function render() {
   const add = (h, items) => { if (h) side.insertAdjacentHTML('beforeend', `<h4>${h}</h4>`); items.forEach(([id, t, m]) => side.insertAdjacentHTML('beforeend', `<a href="#${id}">${m ? `<span class="m">${m}</span>` : ''}${t}</a>`)); };
   add('Giới thiệu', [['start', 'Bắt đầu nhanh'], ['auth', 'Xác thực &amp; quy ước']]);
   add('Endpoint', EPS.map(e => ['ep-' + e.id, e.path.replace('/api/v1', ''), 'GET']));
-  add('Khác', [['ai-tasks', 'Các task AI'], ['shortcut', 'Phím tắt iPhone'], ['errors', 'Mã lỗi &amp; sự cố'], ['env', 'Biến môi trường']]);
+  add('Khác', [['ai-tasks', 'Các task AI'], ['shortcut', 'Phím tắt iPhone'], ['diag', 'Log lỗi &amp; AI chẩn đoán'], ['errors', 'Mã lỗi &amp; sự cố'], ['env', 'Biến môi trường']]);
 
   const root = $('endpoints'); root.innerHTML = '<section><h2>Endpoint</h2></section>';
   const sec = root.firstChild;
   for (const e of EPS) {
-    const rows = [...COMMON.map(([n, d, r]) => [n, d, r]), ...e.params.map(p => [p[0], p[1], false])];
+    const rows = [...COMMON.filter(c => !(e.noUrl && c[0] === 'url')).map(([n, d, r]) => [n, d, r]), ...e.params.map(p => [p[0], p[1], false])];
     const tbl = rows.map(([n, d, r]) => `<tr><td>${n}${r ? '<span class="req">bắt buộc</span>' : ''}</td><td>${noTick(d)}</td></tr>`).join('');
     const curlPath = e.path;
-    const ex = `curl -L -X POST '{BASE}${curlPath}' \\\n  -F 'url=https://www.tiktok.com/@user/video/123' \\\n  -F 'key={KEY}'` + (e.tryParams.length ? e.tryParams.slice(0, 1).map(([n, o]) => ` \\\n  -F '${n}=${Array.isArray(o) ? o[1] || o[0] : '2'}'`).join('') : '');
+    const ex = e.curl || `curl -L -X POST '{BASE}${curlPath}' \\\n  -F 'url=https://www.tiktok.com/@user/video/123' \\\n  -F 'key={KEY}'` + (e.tryParams.length ? e.tryParams.slice(0, 1).map(([n, o]) => ` \\\n  -F '${n}=${Array.isArray(o) ? o[1] || o[0] : '2'}'`).join('') : '');
     const tryFields = e.tryParams.map(([n, o]) => `<div><label class="lbl">${n}</label>` + (Array.isArray(o)
-      ? `<select data-p="${n}">${o.map(v => `<option>${v}</option>`).join('')}</select>` : `<input data-p="${n}" placeholder="${n === 'index' ? '1,3 hoặc all' : n === 'q' ? 'câu hỏi' : ''}">`) + '</div>').join('');
+      ? `<select data-p="${n}">${o.map(v => `<option>${v}</option>`).join('')}</select>` : `<input data-p="${n}" placeholder="${n === 'index' ? '1,3 hoặc all' : n === 'q' ? 'câu hỏi' : n === 'text' ? 'vd: Giải 2x+3=11' : n === 'level' ? 'vd: lớp 9' : n === 'id' ? 'số thứ tự lỗi' : ''}">`) + '</div>').join('');
     sec.insertAdjacentHTML('beforeend', `
       <div class="card ep" id="ep-${e.id}" data-ep="${e.id}">
         <header><span class="verb">${e.verbs}</span><span class="path">${e.path}</span></header>
@@ -344,7 +404,7 @@ function render() {
         <b>Ví dụ</b><pre data-tpl="${esc(ex)}"></pre>
         <b>Trả về</b><pre>${esc(e.ex.ret)}</pre>${e.ex.retText ? `<p style="color:var(--muted);font-size:14px">${esc(e.ex.retText)}</p>` : ''}
         <details class="try"><summary>Thử ngay</summary>
-          <div class="tryform"><div style="grid-column:1/-1"><label class="lbl">url</label><input data-p="url" placeholder="https://www.tiktok.com/@user/video/123"></div>${tryFields}</div>
+          <div class="tryform">${e.noUrl ? '' : '<div style="grid-column:1/-1"><label class="lbl">url</label><input data-p="url" placeholder="https://www.tiktok.com/@user/video/123"></div>'}${e.file ? '<div style="grid-column:1/-1"><label class="lbl">image (ảnh chụp màn hình đề bài, tuỳ chọn)</label><input type="file" data-file="image" accept="image/*"></div>' : ''}${tryFields}</div>
           <button class="btn go" data-run type="button">Gửi yêu cầu</button>
           <div class="out" aria-live="polite"></div>
         </details>
@@ -365,7 +425,9 @@ document.addEventListener('click', async ev => {
   const btn = ev.target.closest('[data-run]'); if (!btn) return;
   const card = btn.closest('.ep'), ep = EPS.find(e => e.id === card.dataset.ep), out = card.querySelector('.out');
   const fd = new FormData(); card.querySelectorAll('[data-p]').forEach(i => { if (i.value.trim()) fd.append(i.dataset.p, i.value.trim()); });
-  if (!fd.get('url')) { out.innerHTML = '<p>Hãy nhập link bài đăng.</p>'; return; }
+  card.querySelectorAll('[data-file]').forEach(i => { if (i.files[0]) fd.append(i.dataset.file, i.files[0]); });
+  if (!ep.noUrl && !fd.get('url')) { out.innerHTML = '<p>Hãy nhập link bài đăng.</p>'; return; }
+  if (ep.id === 'solve' && !fd.get('text') && !fd.get('image')) { out.innerHTML = '<p>Hãy nhập đề bài hoặc chọn ảnh chụp màn hình.</p>'; return; }
   const headers = {}; if ($('key').value) headers['X-API-Key'] = $('key').value;
   btn.disabled = true; btn.textContent = 'Đang gửi…'; out.innerHTML = '';
   try {

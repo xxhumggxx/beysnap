@@ -6,3 +6,4 @@ gunicorn>=22.0
 Pillow>=10.0
 av>=12.0
 audioop-lts>=0.2; python_version >= "3.13"
+pillow-heif>=0.16

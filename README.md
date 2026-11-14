@@ -149,3 +149,13 @@ Cần có file `docs.html` nằm cạnh `app.py` trên GitHub.
 - `DISCORD_WEBHOOK` (tuỳ chọn): mỗi yêu cầu tải hoặc AI (web lẫn API) gửi một thẻ nhúng về kênh Discord: link, IP, trình duyệt, kết quả/lỗi. Lọc bằng `DISCORD_EVENTS`. Đây là log phía máy chủ, không hiện trong DevTools của người dùng.
 - `GROQ_API_KEY` đặt trong Render dùng chung cho mọi người; ai muốn dùng khoá riêng thì gửi header `X-Groq-Key`.
 - `/api/v1/links` giờ thử mở thật từng file trước khi trả, sửa lỗi Phím tắt báo "Đã lưu" mà không có gì (xem `PROMPT_PHIM_TAT_IPHONE.md`).
+
+
+## v5: giải bài bằng AI, tự log lỗi và AI chẩn đoán
+
+- **`/api/v1/solve`**: gửi ảnh chụp màn hình đề bài (tải lên dạng tệp, base64 hoặc body ảnh) và/hoặc chữ nhập từ ô hỏi của Phím tắt. Ảnh được nén, model thị giác chép lại đề, model suy luận giải và tự kiểm tra. Chế độ `full/answer/explain/hint/check`, trả JSON hoặc `format=text` / `part=answer` cho Phím tắt. Hướng dẫn: cuối `PROMPT_PHIM_TAT_IPHONE.md` và mục `/docs`.
+- **Log lỗi tự động**: lỗi được ghi (xoá khoá/mật khẩu), gửi Discord, rồi nếu có `GROQ_API_KEY` + `DISCORD_WEBHOOK` thì AI đọc traceback và đúng các hàm liên quan trong `app.py` (chọn từ mục lục toàn bộ mã nguồn) và gửi hướng xử lý lên Discord. Có chống trùng, giới hạn mỗi giờ; tắt bằng `ERROR_AI=0`. Xem/gọi AI thủ công ở `/api/v1/errors` (cần `API_KEY`).
+- Discord: thêm loại log `solve` và `diagnosis`; tự bỏ bớt khi vượt `DISCORD_PER_MIN` thẻ mỗi phút.
+- Biến môi trường mới: `ERROR_AI`, `ERROR_AI_COOLDOWN`, `ERROR_AI_HOURLY`, `ERROR_LOG_FILE`, `SOLVE_LIMIT`, `DISCORD_PER_MIN`.
+- `requirements.txt` thêm `pillow-heif` để đọc ảnh HEIC của iPhone.
+- Mô hình thị giác mặc định `GROQ_VISION_MODEL` (đổi được trên Render nếu Groq gỡ model).

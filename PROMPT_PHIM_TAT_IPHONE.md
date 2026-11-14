@@ -259,3 +259,65 @@ Mỗi lần có người tải hoặc dùng AI (web lẫn API), kênh đó nhậ
 Đây là log phía máy chủ (server gọi Discord trực tiếp, không qua trình duyệt người dùng), nên người dùng không thấy request này khi họ tự kiểm tra mạng trên máy họ — đó là cách Discord webhook hoạt động, không có mẹo che giấu nào thêm. Vì log chứa IP/link thật của người dùng, nếu bạn chia sẻ máy chủ cho người khác dùng thì nên nói rõ điều này với họ.
 
 **Dùng chung một khoá Groq:** đặt `GROQ_API_KEY` trong Render > Environment (đã hỗ trợ sẵn). Mọi người dùng web hoặc API đều dùng được AI mà không cần tự nhập khoá; ai muốn dùng khoá riêng vẫn có thể gửi header `X-Groq-Key` để không dùng chung hạn mức với người khác.
+
+
+---
+
+# Phím tắt "Giải bài": chụp màn hình hoặc nhập vào ô
+
+API: `POST {BASE}/api/v1/solve` (không cần link). AI đọc ảnh, **chép lại đề cho bạn kiểm tra**, rồi giải và tự kiểm tra phép tính.
+
+## Cách A: chụp màn hình đề bài (đơn giản nhất)
+1. **Chụp ảnh màn hình** (hoặc **Chọn ảnh** nếu đề nằm trong thư viện).
+2. **Chuyển đổi ảnh** → định dạng **JPEG** (tránh lỗi định dạng lạ; server vẫn đọc được PNG/HEIC/WebP).
+3. **Lấy nội dung của URL**: địa chỉ `{BASE}/api/v1/solve`, Phương thức **POST**, Nội dung yêu cầu **Biểu mẫu**:
+   - `key` = API key của bạn (kiểu Văn bản)
+   - `image` = **Ảnh đã chuyển đổi** (kiểu **Tệp**, đừng chọn Văn bản)
+   - `format` = `text`
+4. **Hiển thị kết quả** (`Nội dung của URL`).
+
+## Cách B: gõ đề vào ô hiện lên
+1. **Hỏi nhập liệu** (Văn bản), câu hỏi: "Nhập đề bài".
+2. **Lấy nội dung của URL**: `{BASE}/api/v1/solve`, **POST**, Biểu mẫu: `key`, `text` = **Nhập được cung cấp**, `format` = `text`.
+3. **Hiển thị kết quả**.
+
+## Gộp cả hai trong một phím tắt
+**Chọn từ Menu** ("Ảnh chụp màn hình" / "Nhập chữ") rồi làm nhánh A hoặc B tương ứng. Muốn vừa gửi ảnh vừa chỉ định câu: thêm `text` = "giải câu 3" cùng với `image`.
+Chạy từ **Nút Sườn/Back Tap/Siri**: thêm bước đầu **Chụp ảnh màn hình** rồi chạy nhánh A, không cần mở app.
+
+## Tham số hữu ích (thêm vào Biểu mẫu)
+| Tham số | Giá trị | Tác dụng |
+|---|---|---|
+| `mode` | `full` (mặc định) · `answer` · `explain` · `hint` · `check` | đáp án + từng bước · chỉ đáp án · giảng như dạy học · chỉ gợi ý, không cho đáp án · chấm bài làm của bạn (bài làm đặt trong `text`) |
+| `subject` | `auto` · `math` `physics` `chemistry` `biology` `code` `english` `literature` `history` `geography` `economics` | ép môn học (mặc định AI tự nhận) |
+| `level` | vd `lớp 9`, `đại học` | giải thích đúng trình độ |
+| `lang` | `vi` `en` `zh` `ja` `ko`… | ngôn ngữ trả lời |
+| `think` | `low` · `medium` · `high` | bài khó dùng `high` (chậm hơn) |
+| `part` | `answer` · `steps` · `question` | thay cho `format=text`: chỉ trả đúng một phần để **Hiển thị thông báo** hoặc **Đọc to** |
+
+Ví dụ "chỉ đọc to đáp án": Biểu mẫu `key`, `image`, `part=answer` → **Đọc văn bản** (`Nội dung của URL`).
+
+## Lưu ý
+- Ảnh càng rõ, cắt sát phần đề thì AI đọc càng chuẩn. Kết quả luôn kèm dòng "📝 Đề: …" là đề AI **đã đọc được**: nếu dòng này sai thì đáp án cũng sai, hãy chụp lại.
+- Lỗi trả về bắt đầu bằng `LỖI:` (vd. "AI không đọc được đề bài trong ảnh"), Phím tắt hiện ra bình thường.
+- AI có thể sai, nhất là bài nhiều bước hoặc có hình vẽ phức tạp. Dùng `mode=hint` hoặc `mode=check` nếu bạn muốn học thay vì chép đáp án.
+- Dùng chung hạn mức Groq miễn phí; mặc định 30 bài mỗi 10 phút mỗi IP (`SOLVE_LIMIT`). Cùng một đề gửi lại trong 30 phút trả ngay từ bộ nhớ đệm.
+
+
+---
+
+# Log lỗi tự động & AI chẩn đoán gửi Discord
+
+Cần `DISCORD_WEBHOOK` và `GROQ_API_KEY` trên Render. Mỗi lỗi mới của server:
+1. được ghi lại (đã xoá khoá/mật khẩu/proxy) và gửi thẻ **error** lên Discord;
+2. AI xem mục lục toàn bộ `app.py`, chọn và đọc các hàm liên quan cùng traceback, rồi gửi thẻ **diagnosis**: nguyên nhân, loại lỗi (code / cấu hình / nguồn chặn IP / người dùng), cách xử lý (kèm tên biến môi trường cần đặt), đoạn sửa code, cách kiểm tra lại.
+
+Chống ngốn hạn mức Groq dùng chung: cùng một lỗi tối đa 1 lần phân tích mỗi 15 phút, tối đa 6 lần mỗi giờ (`ERROR_AI_COOLDOWN`, `ERROR_AI_HOURLY`). Tắt hẳn: `ERROR_AI=0`.
+
+Xem lại và gọi AI thủ công (cần `API_KEY`):
+- Danh sách: `{BASE}/api/v1/errors?key=KEY&format=text`
+- Chi tiết + traceback: thêm `&id=3`
+- Nhờ AI chẩn đoán: thêm `&analyze=1` (thêm `&force=1` để chẩn đoán lại)
+Làm Phím tắt "Xem lỗi server": **Lấy nội dung của URL** (GET, địa chỉ trên) → **Hiển thị kết quả**.
+
+**Minh bạch:** để phân tích, các hàm liên quan trong `app.py` và traceback (đã xoá bí mật) được gửi tới Groq; AI chỉ nhận văn bản và không có công cụ chạy lệnh. Log lỗi nằm trong bộ nhớ và file tạm nên mất khi Render khởi động lại (gói miễn phí tự ngủ sau 15 phút không dùng), kênh Discord mới là nơi lưu lâu dài. Chẩn đoán của AI chỉ là gợi ý, hãy đọc trước khi sửa code. Nếu người khác dùng chung máy chủ, nên nói rõ với họ rằng IP, link và đề bài họ gửi được ghi vào log Discord của bạn.

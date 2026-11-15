@@ -3955,6 +3955,30 @@ def tikwm_user_attempts(user, count, cursor):
         yield "requests", ep, params, {**hdr, "User-Agent": UA}, False
 
 
+def ytdlp_channel(user, count):
+    """Dự phòng khi tikwm chặn IP (không cần Cloudflare): yt-dlp liệt kê bài của kênh thẳng từ TikTok. Không có seed:
+    từng video sẽ được lấy lúc tạo ZIP (đã có sẵn các đường dự phòng)."""
+    if yt_dlp is None:
+        raise RuntimeError("yt-dlp chưa cài")
+    opts = {"quiet": True, "skip_download": True, "extract_flat": True, "playlistend": count, "socket_timeout": 20,
+            **({"proxy": OUTBOUND_PROXY} if OUTBOUND_PROXY else {}), **({"cookiefile": COOKIE_FILE} if COOKIE_FILE else {})}
+    with yt_dlp.YoutubeDL(opts) as ydl:
+        info = ydl.extract_info(f"https://www.tiktok.com/@{user}", download=False)
+    items = []
+    for e in (info or {}).get("entries") or []:
+        vid = str(e.get("id") or "")
+        if not vid.isdigit():
+            continue
+        thumbs = e.get("thumbnails") or []
+        items.append({"id": vid, "url": f"https://www.tiktok.com/@{user}/video/{vid}",
+                      "title": (e.get("title") or e.get("description") or "")[:120],
+                      "cover": (thumbs[-1].get("url") if thumbs else "") or "", "duration": int(e.get("duration") or 0),
+                      "time": int(e.get("timestamp") or 0), "is_photo": False, "plays": e.get("view_count") or 0, "seed": None})
+    if not items:
+        raise RuntimeError("yt-dlp không liệt kê được bài nào")
+    return {"user": user, "nickname": (info or {}).get("uploader") or "", "videos": items[:count]}
+
+
 def channel_videos(user, count):
     """Danh sách bài mới nhất của kênh TikTok qua tikwm (cùng đường relay/chống chặn IP như tải video). -> dict."""
     count = max(1, min(int(count or 10), BATCH_MAX_ITEMS))
@@ -3964,7 +3988,17 @@ def channel_videos(user, count):
         return hit
     items, cursor, pages, nick = [], 0, 0, ""
     while len(items) < count and pages < 3:
-        page = _hedged(tikwm_user_attempts(user, min(count, 30), cursor), lambda jj: jj["data"])
+        try:
+            page = _hedged(tikwm_user_attempts(user, min(count, 30), cursor), lambda jj: jj["data"])
+        except Exception as e:
+            if items or "chặn IP" not in str(e):
+                raise
+            try:  # tikwm chặn IP Render: thử liệt kê thẳng từ TikTok bằng yt-dlp
+                res = ytdlp_channel(user, count)
+                cache_set(key, res, ttl=5 * 60)
+                return res
+            except Exception as e2:
+                raise RuntimeError(f"{e}; yt-dlp cũng không được ({str(e2)[:120]})")
         pages += 1
         for v in page.get("videos") or []:
             vid = str(v.get("video_id") or v.get("id") or "")
@@ -4023,7 +4057,7 @@ def channel_fetch(v1):
     except Exception as e:
         discord_log("error", 0xED4245, endpoint=request.path, user=user, ip=client_ip(), loi=redact(str(e)))
         report_error(request.path, e, user=user)
-        hint = (" | Cách sửa: đặt TIKWM_RELAY (và cập nhật Cloudflare Worker có /relay-user) hoặc OUTBOUND_PROXY trên Render."
+        hint = (" | Cách sửa (không cần Cloudflare): đặt OUTBOUND_PROXY (proxy IP dân cư) trong Render > Environment; hoặc thử lại sau, hoặc dán danh sách link video vào ô Tải hàng loạt."
                 if "chặn IP" in str(e) else "")
         return None, (jsonify(error=f"Không lấy được danh sách video của @{user}: {e}{hint}"), ST_UPSTREAM)
     discord_log("get", 0x57F287, endpoint=request.path, ip=client_ip(), user="@" + user, so_video=len(res["videos"]),

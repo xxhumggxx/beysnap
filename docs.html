@@ -273,6 +273,7 @@
         <tr><td>ERROR_AI</td><td><code class="i">0</code> để tắt AI tự chẩn đoán lỗi (vẫn ghi log). Mặc định bật khi có cả <code class="i">GROQ_API_KEY</code> và <code class="i">DISCORD_WEBHOOK</code>.</td></tr>
         <tr><td>ERROR_AI_COOLDOWN / ERROR_AI_HOURLY</td><td>Giây chờ trước khi phân tích lại cùng một lỗi (mặc định 900) · số lần AI phân tích tối đa mỗi giờ (mặc định 10).</td></tr>
         <tr><td>ERROR_LOG_FILE</td><td>(tuỳ chọn) đường dẫn file JSONL lưu lỗi. Mặc định nằm trong thư mục tạm.</td></tr>
+        <tr><td>TIKTOK_APIS</td><td>(tuỳ chọn) thêm nguồn dự phòng riêng khi tikwm bị chặn: mỗi dòng một địa chỉ GET có <code class="i">{url}</code>, trả JSON hoặc HTML chứa link mp4/mp3/ảnh. Có sẵn các nguồn tiklydown, lovetik, tikdownloader, ttsave chạy song song.</td></tr>
         <tr><td>BATCH_MAX_ITEMS / BATCH_MAX_MB</td><td>Tải hàng loạt: số link tối đa mỗi ZIP (mặc định 30) · dung lượng ZIP tối đa tính bằng MB (mặc định 150). ZIP ghi ra đĩa tạm và giữ 30 phút.</td></tr>
         <tr><td>SOLVE_LIMIT</td><td>Số bài giải mỗi IP trong 10 phút (mặc định 30).</td></tr>
       </table></div>

@@ -34,7 +34,7 @@ import time
 import traceback
 import unicodedata
 import zipfile
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from http.cookiejar import DefaultCookiePolicy
 from datetime import datetime, timedelta, timezone
 from urllib.parse import quote, unquote, urlparse
@@ -947,6 +947,144 @@ def get_tikwm(url):
     return data
 
 
+# ======================= nhiều nguồn dự phòng khi tikwm bị chặn =======================
+# Mỗi nguồn là một dịch vụ tải TikTok công khai khác; chạy SONG SONG, nguồn nào trả media hợp lệ trước thì dùng. Các nguồn ngoài có thể
+# đổi giao diện/chết bất cứ lúc nào nên đọc JSON/HTML theo kiểu "lỏng" (tìm link mp4/mp3/ảnh theo tên khoá). Thêm nguồn riêng bằng biến
+# TIKTOK_APIS: mỗi dòng một địa chỉ GET có {url} (vd. https://api.example.com/dl?url={url}) trả JSON.
+TIKTOK_APIS = [u.strip() for u in re.split(r"[\n,]+", os.environ.get("TIKTOK_APIS", "")) if "{url}" in u]
+_alt_stat = {}  # tên nguồn -> (lần thành công, lần lỗi): hiện ở /api/v1/errors?format=text để biết nguồn nào còn sống
+
+
+def _walk_json(o, path=""):
+    if isinstance(o, dict):
+        for k, v in o.items():
+            yield from _walk_json(v, f"{path}/{k}".lower())
+    elif isinstance(o, list):
+        for v in o:
+            yield from _walk_json(v, path)
+    elif isinstance(o, str) and o.startswith("http"):
+        yield path, o
+
+
+def alt_normalize(raw, url, title="", author="", cover=""):
+    """JSON/HTML bất kỳ -> dữ liệu chuẩn của app, hoặc ném lỗi nếu không thấy media."""
+    if isinstance(raw, str):
+        pairs = [("/a", h.replace("&amp;", "&")) for h in re.findall(r'href=["\'](https?://[^"\']+)', raw)]
+        pairs += [("/img", h) for h in re.findall(r'src=["\'](https?://[^"\']+\.(?:jpe?g|webp)[^"\']*)', raw)]
+        info = {}
+    else:
+        pairs = list(_walk_json(raw))
+        info = raw if isinstance(raw, dict) else {}
+    vids, auds, imgs = [], [], []
+    for path, u in pairs:
+        low = u.lower().split("?")[0]
+        if low.endswith((".mp3", ".m4a")) or re.search(r"music|audio|sound", path):
+            auds.append(u)
+        elif low.endswith((".jpg", ".jpeg", ".webp", ".png", ".heic")) or re.search(r"/(images?|photos?|slides?)\b", path):
+            if re.search(r"cover|avatar|thumb|origin_cover|dynamic", path):
+                cover = cover or u
+            else:
+                imgs.append(u)
+        elif (low.endswith((".mp4", ".mov", ".webm")) or re.search(r"video|play|download|nowm|nowatermark|hd|wm|mp4", path)) \
+                and not re.search(r"avatar|cover|thumb|share", path):
+            vids.append((path, u))
+    def rank(p):
+        return (0 if re.search(r"hd|1080|720", p[0]) and not re.search(r"wm|watermark", p[0].replace("nowm", "").replace("no_watermark", "")) else
+                1 if re.search(r"nowm|no_?watermark|noWatermark".lower(), p[0]) else 2 if not re.search(r"wm|watermark", p[0]) else 3)
+    vids.sort(key=rank)
+    uniq_v = list(dict.fromkeys(u for _, u in vids))
+    if not uniq_v and not imgs:
+        raise RuntimeError("không thấy media")
+    vid = (re.search(r"/(?:video|photo)/(\d+)", url) or re.search(r"(\d{15,})", url) or [None, "tiktok"])[1]
+    title = title or str(info.get("title") or info.get("desc") or info.get("description") or "")[:150]
+    base = safe_name(title, vid)
+    videos = []
+    for n, u in enumerate(uniq_v[:3]):
+        q = "hd" if n == 0 else "sd"
+        videos.append({"label": "HD" if n == 0 else "SD", "quality": q, "clean": True, "url": u,
+                       "filename": f"{base}_{q}.mp4" if n == 0 else f"{base}.mp4"})
+    images = [{"index": i, "url": u, "filename": f"{base}_{i:02d}.{ext_from_url(u, 'jpg')}"}
+              for i, u in enumerate(dict.fromkeys(imgs), 1)] if not videos else []
+    aud = auds[0] if auds else ""
+    return {"id": vid, "base": base, "title": title, "author": author or str((info.get("author") or {}).get("name") if isinstance(info.get("author"), dict) else info.get("author") or ""),
+            "cover": cover, "duration": 0, "is_photo": bool(images and not videos), "videos": videos,
+            "audio": {"label": "Nhạc nền", "url": aud, "filename": f"{base}_music.mp3"} if aud else None, "images": images}
+
+
+def _alt_get(name, fn):
+    ok = False
+    try:
+        out = fn()
+        ok = True
+        return out
+    finally:
+        a, b = _alt_stat.get(name, (0, 0))
+        _alt_stat[name] = (a + 1, b) if ok else (a, b + 1)
+
+
+def alt_providers(url):
+    H = {"User-Agent": UA, "Accept": "application/json, text/plain, */*"}
+    def tiklydown():
+        r = http.get("https://api.tiklydown.eu.org/api/download/v3", params={"url": url}, headers=H, timeout=12)
+        r.raise_for_status()
+        return alt_normalize(r.json(), url)
+    def lovetik():
+        r = http.post("https://lovetik.com/api/ajax/search", data={"query": url}, timeout=12,
+                      headers={**H, "Origin": "https://lovetik.com", "Referer": "https://lovetik.com/", "X-Requested-With": "XMLHttpRequest"})
+        r.raise_for_status()
+        j = r.json()
+        links = [{"u": l.get("a"), "t": l.get("t", "")} for l in (j.get("links") or []) if l.get("a")]
+        if not links:
+            raise RuntimeError(j.get("mess") or "không có link")
+        return alt_normalize({"title": j.get("desc"), "author": j.get("author"), "cover": j.get("cover"), "links": [
+            {("music" if "mp3" in l["t"].lower() or "music" in l["t"].lower() else "video_wm" if "watermark" in l["t"].lower() and "no" not in l["t"].lower() else "video_nowm"): l["u"]}
+            for l in links]}, url, title=str(j.get("desc") or ""), author=str(j.get("author") or ""))
+    def tikdownloader():
+        r = http.post("https://tikdownloader.io/api/ajaxSearch", data={"q": url, "lang": "en"}, timeout=12,
+                      headers={**H, "Origin": "https://tikdownloader.io", "Referer": "https://tikdownloader.io/", "X-Requested-With": "XMLHttpRequest"})
+        r.raise_for_status()
+        return alt_normalize(r.json().get("data") or "", url)
+    def ssstik_like():  # ttsave-kiểu: trang kết quả HTML
+        r = http.get("https://api.ttsave.app/", params={"url": url}, headers=H, timeout=12)
+        r.raise_for_status()
+        try:
+            return alt_normalize(r.json(), url)
+        except ValueError:
+            return alt_normalize(r.text, url)
+    provs = [("tiklydown", tiklydown), ("lovetik", lovetik), ("tikdownloader", tikdownloader), ("ttsave", ssstik_like)]
+    for i, tpl in enumerate(TIKTOK_APIS):
+        def custom(tpl=tpl):
+            r = http.get(tpl.replace("{url}", quote(url, safe="")), headers=H, timeout=12)
+            r.raise_for_status()
+            try:
+                return alt_normalize(r.json(), url)
+            except ValueError:
+                return alt_normalize(r.text, url)
+        provs.insert(0, (f"custom{i + 1}", custom))
+    return provs
+
+
+def alt_fetch(url):
+    """Chạy mọi nguồn dự phòng song song; trả kết quả hợp lệ đầu tiên (hoặc ném lỗi tổng hợp)."""
+    futs = {_bg_pool.submit(_alt_get, n, f): n for n, f in alt_providers(url)}
+    errs = []
+    try:
+        for fut in as_completed(futs, timeout=18):
+            try:
+                d = fut.result()
+                if d and (d["videos"] or d["images"]):
+                    d["via"] = futs[fut]
+                    return d
+            except Exception as e:
+                errs.append(f"{futs[fut]}: {str(e)[:60]}")
+    except Exception:
+        errs.append("quá thời gian chờ")
+    finally:
+        for f in futs:
+            f.cancel()
+    raise RuntimeError("các nguồn dự phòng đều lỗi (" + "; ".join(errs[:5]) + ")")
+
+
 def _get_tikwm(url):
     if not host_match(url, ALLOWED_HOSTS):
         return get_generic(url)
@@ -987,6 +1125,13 @@ def _get_tikwm(url):
             app.logger.warning("tikwm lỗi (%s): %s", c, e)
             if "chặn IP" in str(e):  # chặn IP thì thử link khác cũng vô ích
                 break
+    if data is None:  # tikwm hỏng/chặn IP: thử song song các dịch vụ tải TikTok khác trước khi tới trang TikTok/yt-dlp
+        try:
+            data = alt_fetch(real_url(True))
+            app.logger.warning("Dùng nguồn dự phòng %s", data.get("via"))
+        except Exception as e:
+            errs.append(str(e))
+            app.logger.warning("Nguồn dự phòng lỗi: %s", e)
     photo_page = None
     if data is None or not data["images"]:
         # có video rồi thì không đợi giải mã link rút gọn (đỡ chậm); chỉ chờ khi tikwm chẳng trả gì

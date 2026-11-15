@@ -5,8 +5,9 @@ services:
     plan: free
     healthCheckPath: /health
     buildCommand: pip install -r requirements.txt
-    # BẮT BUỘC -w 1: link tải lưu trong bộ nhớ, nhiều worker sẽ làm link hết hạn giả
-    startCommand: gunicorn -w 1 --threads 8 --timeout 300 -b 0.0.0.0:$PORT app:app
+    # BẮT BUỘC -w 1: link tải lưu trong bộ nhớ, nhiều worker sẽ làm link hết hạn giả.
+    # --threads 16: nhiều yêu cầu song song (Phím tắt gọi liên tiếp); --keep-alive 30: giữ kết nối, bớt độ trễ bắt tay
+    startCommand: gunicorn -w 1 --threads 16 --keep-alive 30 --timeout 300 -b 0.0.0.0:$PORT app:app
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.7
@@ -16,15 +17,27 @@ services:
         sync: false           # tự điền trong Render > Environment, không để trong code
       - key: OUTBOUND_PROXY
         sync: false           # (tuỳ chọn) http://user:pass@host:port - proxy IP dân cư nếu tikwm/TikTok chặn IP Render
+      - key: TIKWM_RELAY
+        sync: false           # (khuyên dùng nếu tikwm báo 403) địa chỉ Cloudflare Worker chuyển tiếp, xem CLOUDFLARE_API.md
+      - key: RELAY_KEY
+        sync: false           # mật khẩu của Worker ở trên
       - key: COOKIES_TXT
         sync: false           # (tuỳ chọn) nội dung cookies.txt để tải Instagram/Facebook/Threads cần đăng nhập
       - key: DISCORD_WEBHOOK
         sync: false           # (tuỳ chọn) link webhook Discord để nhận log mọi yêu cầu (link, IP, kết quả)
       - key: DISCORD_EVENTS
-        sync: false           # (tuỳ chọn) lọc loại log gửi đi: info,get,ai,solve,ingest,error,diagnosis (mặc định gửi hết)
+        sync: false           # (tuỳ chọn) lọc loại log gửi đi: info,get,ai,solve,ingest,error,diagnosis,file (mặc định gửi hết)
+      - key: DISCORD_FILES
+        value: "1"            # 0 = chỉ gửi thông tin/link lên Discord, không gửi kèm chính file video/ảnh vừa tải
+      - key: DISCORD_FILE_MAX_MB
+        value: "10"           # file lớn hơn mức này chỉ ghi thông tin (webhook Discord thường nhận tối đa ~10 MB)
       - key: ERROR_AI
         value: "1"            # 0 = tắt AI tự chẩn đoán lỗi (vẫn ghi log); cần GROQ_API_KEY + DISCORD_WEBHOOK
       - key: ERROR_AI_HOURLY
-        value: "6"            # tối đa số lần AI phân tích lỗi mỗi giờ (tiết kiệm hạn mức Groq dùng chung)
+        value: "10"            # tối đa số lần AI phân tích lỗi mỗi giờ (tiết kiệm hạn mức Groq dùng chung)
+      - key: BATCH_MAX_ITEMS
+        value: "30"           # tải hàng loạt: số link tối đa mỗi ZIP
+      - key: BATCH_MAX_MB
+        value: "150"          # tải hàng loạt: dung lượng ZIP tối đa (MB), ghi ra đĩa tạm, giữ 30 phút
       - key: SOLVE_LIMIT
         value: "30"           # số bài giải mỗi IP trong 10 phút

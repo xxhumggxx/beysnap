@@ -139,6 +139,33 @@
   .toast { position:fixed; left:50%; bottom:calc(26px + env(safe-area-inset-bottom)); transform:translateX(-50%) translateY(24px); opacity:0; transition:.3s cubic-bezier(.2,.8,.2,1); z-index:10;
     background:rgba(40,40,42,.88); backdrop-filter:blur(20px); -webkit-backdrop-filter:blur(20px); color:#fff; padding:11px 20px; border-radius:999px; font-weight:500; font-size:15px; max-width:90vw; pointer-events:none; }
   .toast.on { opacity:1; transform:translateX(-50%); }
+  .sheet { margin-top:20px; background:var(--card); border-radius:var(--radius); box-shadow:var(--shadow); padding:18px 20px; border:1px solid var(--line); }
+  .sheet > summary { cursor:pointer; font-weight:600; font-size:17px; list-style:none; letter-spacing:-.015em; min-height:30px; display:flex; align-items:center; }
+  .sheet > summary::-webkit-details-marker { display:none; }
+  .sheet > summary::after { content:"›"; margin-left:auto; color:var(--muted); font-size:22px; transition:transform .2s; }
+  .sheet[open] > summary::after { transform:rotate(90deg); }
+  .sheet[open] > summary { margin-bottom:12px; }
+  .sheet-h { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:10px; font-size:17px; }
+  .sheet textarea { width:100%; font:inherit; font-size:15.5px; padding:12px 14px; border-radius:14px; border:1px solid var(--edge); background:var(--fill); color:var(--ink); resize:vertical; min-height:110px; }
+  .sheet textarea:focus-visible { outline:3px solid color-mix(in srgb,var(--red) 45%, transparent); }
+  .hist { display:flex; flex-direction:column; gap:1px; background:var(--line); border-radius:16px; overflow:hidden; }
+  .hrow { display:flex; align-items:center; gap:12px; background:var(--card); padding:8px 8px 8px 10px; min-height:62px; }
+  .hrow .go1 { flex:1; min-width:0; display:flex; align-items:center; gap:12px; font:inherit; color:var(--ink); background:transparent; border:0; text-align:left; cursor:pointer; padding:2px; border-radius:12px; }
+  .hrow .go1:hover { background:var(--fill); }
+  .hrow img, .hrow .ph { width:44px; height:58px; border-radius:10px; object-fit:cover; background:var(--fill); flex:none; display:flex; align-items:center; justify-content:center; font-size:20px; }
+  .hrow .ht { font-weight:500; font-size:15.5px; line-height:1.3; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; word-break:break-word; }
+  .hrow .hs { color:var(--muted); font-size:13px; margin-top:2px; }
+  .hrow .x { flex:none; border:0; background:transparent; color:var(--muted); font-size:18px; width:36px; height:36px; border-radius:50%; cursor:pointer; }
+  .hrow .x:hover { background:var(--fill); }
+  .jobbar { height:8px; border-radius:99px; background:var(--fill2); overflow:hidden; margin:14px 0 8px; }
+  .jobbar i { display:block; height:100%; width:0; background:var(--red); border-radius:99px; transition:width .3s; }
+  .jobitems { display:flex; flex-direction:column; gap:4px; max-height:240px; overflow:auto; font-size:14.5px; }
+  .jobitems div { display:flex; gap:8px; align-items:baseline; }
+  .jobitems .m { color:var(--muted); font-size:13px; }
+  .jobhead { font-weight:600; font-size:15.5px; }
+  .tile .cap { position:absolute; left:0; right:0; bottom:0; padding:26px 9px 8px; background:linear-gradient(transparent, rgba(0,0,0,.72)); color:#fff; font-size:12.5px; line-height:1.25;
+    display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; pointer-events:none; word-break:break-word; }
+  .tile.pick { cursor:pointer; } .tile.pick img { cursor:pointer; }
   footer { text-align:center; color:var(--muted); font-size:13px; margin-top:34px; line-height:1.6; }
   footer a { color:var(--red); text-decoration:none; }
   @media (max-width:520px) {
@@ -165,7 +192,7 @@
   </header>
 
   <form class="bar" id="form">
-    <input id="url" type="text" inputmode="url" placeholder="Dán link TikTok / Instagram / Facebook / X / Threads…" autocomplete="off" aria-label="Link bài viết" required>
+    <input id="url" type="text" inputmode="url" placeholder="Dán link TikTok / Instagram / Facebook / X / Threads… hoặc @tên_kênh" autocomplete="off" aria-label="Link bài viết" required>
     <button type="button" class="btn soft" id="pasteBtn">Dán</button>
     <button class="btn go" id="go">Tải ⬇</button>
   </form>
@@ -235,6 +262,44 @@
       <p class="note" id="aiNote"></p>
       <div class="res" id="aiRes"></div>
     </div>
+  </section>
+
+  <section class="sheet" id="chanBox" style="display:none" aria-live="polite">
+    <div class="sheet-h"><b id="chanTitle">Kênh</b><button class="mini" id="chanClose" type="button">Đóng</button></div>
+    <div class="toolbar">
+      <label for="chanCount" style="color:var(--muted)">Lấy</label>
+      <select id="chanCount" aria-label="Số video mới nhất"><option>5</option><option selected>10</option><option>20</option><option>30</option></select>
+      <span style="color:var(--muted)">video mới nhất</span>
+      <button class="btn soft" id="chanReload" type="button">Tải lại danh sách</button>
+    </div>
+    <div class="toolbar">
+      <button class="btn soft" id="chanAll" type="button">Chọn tất cả</button>
+      <button class="btn soft" id="chanNone" type="button">Bỏ chọn</button>
+      <select id="chanKind" aria-label="Loại tải"><option value="auto">Video (bài ảnh lấy ảnh)</option><option value="music">Chỉ nhạc MP3</option><option value="all">Video + nhạc</option></select>
+      <span class="sp"></span>
+      <button class="btn go" id="chanZip" type="button" disabled>📦 Tải ZIP</button>
+    </div>
+    <div class="grid" id="chanGrid"></div>
+    <div id="chanJob"></div>
+    <p class="note">Bấm vào video để chọn hoặc bỏ chọn. Danh sách lấy qua tikwm; kênh riêng tư thì không có bài.</p>
+  </section>
+
+  <details class="sheet" id="batchBox">
+    <summary>📦 Tải hàng loạt: nhiều link thành một file ZIP</summary>
+    <textarea id="batchUrls" placeholder="Mỗi dòng một link (tối đa 30). Dán lẫn chữ cũng được, tự nhặt link." spellcheck="false" aria-label="Danh sách link"></textarea>
+    <div class="toolbar" style="margin-top:10px">
+      <select id="batchKind" aria-label="Loại tải"><option value="auto">Video (bài ảnh lấy ảnh)</option><option value="music">Chỉ nhạc MP3</option><option value="images">Chỉ ảnh</option><option value="all">Tất cả (video + nhạc + ảnh)</option></select>
+      <span class="sp"></span>
+      <button class="btn go" id="batchGo" type="button">Tạo ZIP</button>
+    </div>
+    <div id="batchJob"></div>
+    <p class="note">Máy chủ tải từng link rồi gộp thành một ZIP. Hãy giữ trang mở tới khi có nút tải; ZIP được giữ 30 phút.</p>
+  </details>
+
+  <section class="sheet" id="histBox" style="display:none">
+    <div class="sheet-h"><b>🕘 Lịch sử gần đây</b><button class="mini" id="histClear" type="button">Xoá lịch sử</button></div>
+    <div class="hist" id="histList"></div>
+    <p class="note">Chỉ lưu trong trình duyệt này (20 link gần nhất), không cần tài khoản. Chạm để tải lại.</p>
   </section>
 
   <footer>Chỉ tải nội dung bạn có quyền sử dụng. Video và ảnh thuộc bản quyền của tác giả, hãy ghi nguồn khi đăng lại.<br><a href="/docs">Tài liệu API cho Phím tắt iPhone</a></footer>
@@ -330,11 +395,18 @@ async function post(path, body) {
   return d;
 }
 $('form').onsubmit = async e => {
-  e.preventDefault(); showErr(''); $('card').style.display = 'none';
-  curUrl = extractUrl($('url').value); $('url').value = curUrl; tid = null; selected.clear();
+  e.preventDefault(); showErr(''); $('card').style.display = 'none'; $('chanBox').style.display = 'none';
+  const raw = $('url').value, user = parseChannelInput(raw.trim());
+  if (user) { loadChannel(user); return; }                       // @tên_kênh hoặc link hồ sơ TikTok
+  const links = [...new Set(raw.match(/https?:\/\/[^\s]+/g) || [])];
+  if (links.length > 1) { openBatch(links); return; }            // nhiều link: chuyển sang tải hàng loạt
+  curUrl = extractUrl(raw); $('url').value = curUrl; tid = null; selected.clear();
   $('go').disabled = true; $('loading').style.display = 'block';
   $('rescue').style.display = 'none';
-  try { cur = await post('/api/info', { url: curUrl }); render(cur); }
+  try {
+    cur = await post('/api/info', { url: curUrl }); render(cur);
+    histAdd({ url: curUrl, title: cur.title || '', author: cur.author || '', cover: cur.cover || '', kind: cur.is_photo ? 'photo' : 'video' });
+  }
   catch (ex) { showErr(ex.message); if (ex.code === 'blocked') rescue(ex.probe); }
   finally { $('go').disabled = false; $('loading').style.display = 'none'; }
 };
@@ -370,6 +442,7 @@ fetch('/health').catch(() => {}); // đánh thức server sớm
 
 /* ---------- hiển thị kết quả ---------- */
 function render(d) {
+  if (d.warning) showErr('⚠️ ' + d.warning);  // vd. Threads chỉ lấy được ảnh xem trước
   $('cover').src = d.cover || ''; $('cover').style.display = d.cover ? '' : 'none';
   $('title').textContent = d.title || '(Không có tiêu đề)';
   $('author').textContent = d.author ? '@' + d.author.replace(/^@/, '') : '';
@@ -605,6 +678,125 @@ $('visBtn').onclick = () => aiRun($('visBtn'), async res => {
   if (v.captions.length) res.append(listBox('💬 Gợi ý caption', v.captions));
   if (v.hashtags.length) res.append(tagsBox(v.hashtags));
 });
+
+/* ---------- lịch sử 20 link gần nhất (chỉ trong trình duyệt này) ---------- */
+const HKEY = 'beysnap_history_v1';
+function histLoad() { try { const a = JSON.parse(localStorage.getItem(HKEY) || '[]'); return Array.isArray(a) ? a.filter(x => x && typeof x.url === 'string') : []; } catch { return []; } }
+function histSave(a) { try { localStorage.setItem(HKEY, JSON.stringify(a.slice(0, 20))); } catch {} }
+function histAdd(item) {
+  if (!item || !item.url) return;
+  histSave([{ ...item, t: Date.now() }, ...histLoad().filter(x => x.url !== item.url)]);
+  histRender();
+}
+function ago(t) {
+  const s = Math.max(0, (Date.now() - (t || 0)) / 1000);
+  return s < 60 ? 'vừa xong' : s < 3600 ? Math.floor(s / 60) + ' phút trước' : s < 86400 ? Math.floor(s / 3600) + ' giờ trước' : Math.floor(s / 86400) + ' ngày trước';
+}
+function histRender() {
+  const a = histLoad(), box = $('histBox'), list = $('histList');
+  box.style.display = a.length ? 'block' : 'none'; list.replaceChildren();
+  a.forEach(it => {
+    const icon = it.kind === 'channel' ? '👤' : it.kind === 'photo' ? '🖼️' : '🎬';
+    const thumb = it.cover ? el('img', { src: it.cover, alt: '', loading: 'lazy', referrerpolicy: 'no-referrer' }) : el('div', { class: 'ph', text: icon });
+    thumb.onerror = () => thumb.replaceWith(el('div', { class: 'ph', text: icon }));
+    const row = el('div', { class: 'hrow' },
+      el('button', { class: 'go1', type: 'button', title: 'Tải lại', onclick: () => { $('url').value = it.url; $('form').requestSubmit ? $('form').requestSubmit() : $('form').dispatchEvent(new Event('submit', { cancelable: true })); window.scrollTo({ top: 0, behavior: 'smooth' }); } },
+        thumb, el('div', { style: 'min-width:0' },
+          el('div', { class: 'ht', text: it.title || it.url }),
+          el('div', { class: 'hs', text: [icon + (it.kind === 'channel' ? ' Kênh' : ''), it.author, ago(it.t)].filter(Boolean).join(' · ') }))),
+      el('button', { class: 'x', type: 'button', 'aria-label': 'Xoá mục này', onclick: () => { histSave(histLoad().filter(x => x.url !== it.url)); histRender(); } }, '✕'));
+    list.append(row);
+  });
+}
+$('histClear').onclick = () => { try { localStorage.removeItem(HKEY); } catch {} histRender(); toast('Đã xoá lịch sử'); };
+
+/* ---------- tiến độ tạo ZIP (dùng chung cho tải hàng loạt và tải theo kênh) ---------- */
+const ICON = { wait: '⏳', run: '⚙️', ok: '✅', err: '⚠️' };
+function renderJob(box, j) {
+  const pct = j.total ? Math.round(j.done / j.total * 100) : 0;
+  const head = el('div', { class: 'jobhead', text: j.status === 'queued' ? 'Đang xếp hàng…' : j.status === 'done' ? `Xong: ${j.ok}/${j.total} link` : j.status === 'error' ? 'Không tạo được ZIP' : `Đang tải ${j.done}/${j.total}…` });
+  const bar = el('div', { class: 'jobbar' }, el('i', { style: 'width:' + (j.status === 'done' ? 100 : pct) + '%' }));
+  const items = el('div', { class: 'jobitems' }, j.items.map(it => el('div', {}, el('span', { text: ICON[it.status] || '•' }),
+    el('span', { text: (it.label || '').slice(0, 60) }), it.message ? el('span', { class: 'm', text: it.message }) : '')));
+  box.replaceChildren(head, bar, items);
+  if (j.status === 'done') {
+    const mb = (j.size / 1048576).toFixed(1);
+    box.append(el('a', { class: 'btn go save', style: 'margin-top:12px;display:block;text-align:center;text-decoration:none', href: '/api/batch/' + j.id + '/zip', download: j.name || 'beysnap.zip' }, `⬇ Tải ZIP (${mb} MB)`));
+  }
+}
+async function runJob(start, box, btn) {
+  btn.disabled = true; showErr(''); box.replaceChildren(el('div', { class: 'jobhead', text: 'Đang gửi yêu cầu…' }));
+  try {
+    let j = await start();
+    for (;;) {
+      renderJob(box, j);
+      if (j.status === 'done' || j.status === 'error') break;
+      await wait(1200);
+      const r = await fetch('/api/batch/' + j.id); const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.error || 'Mất kết nối tới máy chủ khi chờ ZIP');
+      j = d;
+    }
+    if (j.status === 'error') showErr(j.message || 'Không tạo được ZIP');
+    else toast('ZIP đã sẵn sàng ✓');
+  } catch (ex) { showErr(ex.message); box.replaceChildren(); }
+  finally { btn.disabled = false; }
+}
+
+/* ---------- tải hàng loạt ---------- */
+function openBatch(links) {
+  $('batchUrls').value = links.join('\n'); $('batchBox').open = true;
+  $('batchBox').scrollIntoView({ behavior: 'smooth', block: 'center' });
+  toast(`Thấy ${links.length} link: bấm “Tạo ZIP” để tải một lần`);
+}
+$('batchGo').onclick = () => {
+  const n = new Set($('batchUrls').value.match(/https?:\/\/[^\s]+/g) || []).size;
+  if (!n) { showErr('Chưa thấy link nào. Mỗi dòng một link.'); return; }
+  runJob(() => post('/api/batch', { urls: $('batchUrls').value, kind: $('batchKind').value }), $('batchJob'), $('batchGo'));
+};
+
+/* ---------- tải theo kênh: @tên_kênh -> chọn N video mới nhất ---------- */
+let chan = null; const chanSel = new Set();
+function parseChannelInput(t) {
+  let m = (t || '').match(/^https?:\/\/(?:www\.|m\.)?tiktok\.com\/@([\w.]{2,24})\/?(?:[?#].*)?$/);
+  if (m) return m[1];
+  m = (t || '').match(/^@([\w.]{2,24})$/); return m ? m[1] : '';
+}
+const mmss = s => s ? Math.floor(s / 60) + ':' + String(Math.floor(s % 60)).padStart(2, '0') : '';
+function chanRefresh() { $('chanZip').textContent = chanSel.size ? `📦 Tải ZIP (${chanSel.size})` : '📦 Tải ZIP'; $('chanZip').disabled = !chanSel.size; }
+function renderChannel() {
+  $('chanTitle').textContent = `👤 @${chan.user}${chan.nickname ? ' · ' + chan.nickname : ''}`;
+  const g = $('chanGrid'); g.replaceChildren();
+  chan.videos.forEach((v, i) => {
+    const ck = el('input', { type: 'checkbox', class: 'ck', 'aria-label': 'Chọn video ' + (i + 1) });
+    ck.checked = chanSel.has(v.id);
+    const tile = el('div', { class: 'tile pick' + (ck.checked ? ' sel' : '') },
+      v.cover ? el('img', { src: v.cover, alt: '', loading: 'lazy', referrerpolicy: 'no-referrer' }) : '',
+      el('span', { class: 'no', text: (v.is_photo ? '🖼️ ' : '') + (mmss(v.duration) || '#' + (i + 1)) }), ck,
+      el('div', { class: 'cap', text: v.title || '(không tiêu đề)' }));
+    const toggle = on => { on ? chanSel.add(v.id) : chanSel.delete(v.id); ck.checked = on; tile.classList.toggle('sel', on); chanRefresh(); };
+    tile.onclick = e => { if (e.target !== ck) toggle(!chanSel.has(v.id)); };
+    ck.onchange = () => toggle(ck.checked);
+    g.append(tile);
+  });
+  chanRefresh(); $('chanBox').style.display = 'block'; $('chanJob').replaceChildren();
+}
+async function loadChannel(user) {
+  $('go').disabled = true; $('loading').style.display = 'block'; $('rescue').style.display = 'none';
+  try {
+    chan = await post('/api/channel', { user: '@' + user, count: +$('chanCount').value || 10 });
+    chanSel.clear(); chan.videos.forEach(v => chanSel.add(v.id));
+    renderChannel();
+    histAdd({ url: '@' + user, title: chan.nickname || '@' + user, author: '@' + user, cover: (chan.videos[0] || {}).cover || '', kind: 'channel' });
+    $('chanBox').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  } catch (ex) { showErr(ex.message); }
+  finally { $('go').disabled = false; $('loading').style.display = 'none'; }
+}
+$('chanReload').onclick = () => chan && loadChannel(chan.user);
+$('chanAll').onclick = () => { chan.videos.forEach(v => chanSel.add(v.id)); renderChannel(); };
+$('chanNone').onclick = () => { chanSel.clear(); renderChannel(); };
+$('chanClose').onclick = () => { $('chanBox').style.display = 'none'; };
+$('chanZip').onclick = () => runJob(() => post('/api/channel/zip', { user: '@' + chan.user, ids: [...chanSel], kind: $('chanKind').value }), $('chanJob'), $('chanZip'));
+histRender();
 </script>
 </body>
 </html>

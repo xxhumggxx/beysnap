@@ -60,7 +60,7 @@ C. "AI tóm tắt TikTok": POST /api/v1/ai với task=summary, lang=vi -> lấy 
 CÁCH TRÌNH BÀY
 - Với mỗi Phím tắt: danh sách hành động đánh số theo đúng thứ tự trên màn hình.
 - Chỉ rõ cách bật "Show in Share Sheet", chọn loại đầu vào, cấp quyền Ảnh và quyền truy cập tên miền onrender.com lần đầu.
-- Cuối cùng cho danh sách kiểm tra và cách xử lý lỗi: 401 (sai key), 403 (nguồn chặn), 502 (nguồn không phản hồi), chờ lâu (server đang ngủ).
+- Cuối cùng cho danh sách kiểm tra và cách xử lý lỗi: 401 (sai key), 403 (nguồn chặn), 424 (nguồn không phản hồi hoặc chặn IP; server dùng 424 thay 502 vì Cloudflare thay nội dung lỗi 502/504 bằng trang HTML), chờ lâu (server đang ngủ).
 ```
 
 ---
@@ -238,7 +238,7 @@ Nếu bạn vẫn dùng nhánh Nếu: ô giá trị của "Otherwise if Selected
 
 **Đã sửa ở server (không cần đổi Phím tắt vẫn đỡ hơn):**
 - Server không còn coi trang HTML/JSON là file; nguồn trả sai loại thì báo lỗi thật.
-- `/api/v1/links` mặc định **thử mở từng file trước** và chỉ trả link tải được. Nếu không có file nào tải được, trả HTTP 502 và một dòng bắt đầu bằng `LỖI:` kèm lý do.
+- `/api/v1/links` mặc định **thử mở từng file trước** và chỉ trả link tải được. Nếu không có file nào tải được, trả HTTP 424 và một dòng bắt đầu bằng `LỖI:` kèm lý do.
 - Ảnh WebP/AVIF tự đổi sang JPEG khi tải.
 
 **Sửa Phím tắt để không báo sai nữa:**
@@ -310,9 +310,12 @@ Ví dụ "chỉ đọc to đáp án": Biểu mẫu `key`, `image`, `part=answer`
 
 Cần `DISCORD_WEBHOOK` và `GROQ_API_KEY` trên Render. Mỗi lỗi mới của server:
 1. được ghi lại (đã xoá khoá/mật khẩu/proxy) và gửi thẻ **error** lên Discord;
-2. AI xem mục lục toàn bộ `app.py`, chọn và đọc các hàm liên quan cùng traceback, rồi gửi thẻ **diagnosis**: nguyên nhân, loại lỗi (code / cấu hình / nguồn chặn IP / người dùng), cách xử lý (kèm tên biến môi trường cần đặt), đoạn sửa code, cách kiểm tra lại.
+2. chương trình tự định vị chỗ nghi ngờ trong code (traceback, dòng chứa đúng câu thông báo lỗi, route và các hàm nó gọi), AI đọc các hàm đó **kèm số dòng** rồi gửi thẻ **diagnosis**: nguyên nhân, loại lỗi (code / cấu hình / cấu hình Phím tắt / nguồn chặn IP / người dùng), vị trí `app.py:dòng`, cách xử lý (kèm tên biến môi trường cần đặt), cách kiểm tra, độ chắc chắn;
+3. nếu là lỗi code, AI viết lại đúng hàm đó; chương trình kiểm tra bằng `ast` (cú pháp, tên biến chưa định nghĩa) rồi đính kèm file **`.diff`** (chưa chạy thử, không tự áp dụng, hãy đọc kỹ trước khi sửa).
 
-Chống ngốn hạn mức Groq dùng chung: cùng một lỗi tối đa 1 lần phân tích mỗi 15 phút, tối đa 6 lần mỗi giờ (`ERROR_AI_COOLDOWN`, `ERROR_AI_HOURLY`). Tắt hẳn: `ERROR_AI=0`.
+Cả lỗi **cấu hình Phím tắt** (vd. gửi GET trống tới `/solve`) cũng được ghi, kèm “hình dạng yêu cầu” (phương thức, kiểu nội dung, tên trường, không có giá trị) để AI chỉ đúng chỗ cần sửa.
+
+Chống ngốn hạn mức Groq dùng chung: cùng một lỗi tối đa 1 lần phân tích mỗi 15 phút, tối đa 10 lần mỗi giờ (`ERROR_AI_COOLDOWN`, `ERROR_AI_HOURLY`); lỗi vượt hạn mức xếp hàng và tự được phân tích khi còn lượt. Tắt hẳn: `ERROR_AI=0`.
 
 Xem lại và gọi AI thủ công (cần `API_KEY`):
 - Danh sách: `{BASE}/api/v1/errors?key=KEY&format=text`
@@ -321,3 +324,56 @@ Xem lại và gọi AI thủ công (cần `API_KEY`):
 Làm Phím tắt "Xem lỗi server": **Lấy nội dung của URL** (GET, địa chỉ trên) → **Hiển thị kết quả**.
 
 **Minh bạch:** để phân tích, các hàm liên quan trong `app.py` và traceback (đã xoá bí mật) được gửi tới Groq; AI chỉ nhận văn bản và không có công cụ chạy lệnh. Log lỗi nằm trong bộ nhớ và file tạm nên mất khi Render khởi động lại (gói miễn phí tự ngủ sau 15 phút không dùng), kênh Discord mới là nơi lưu lâu dài. Chẩn đoán của AI chỉ là gợi ý, hãy đọc trước khi sửa code. Nếu người khác dùng chung máy chủ, nên nói rõ với họ rằng IP, link và đề bài họ gửi được ghi vào log Discord của bạn.
+
+## Cập nhật v6: Threads, lỗi 424, giải bài, file lên Discord
+
+- **Threads**: server đọc thẳng video/ảnh/album gốc của bài. Nếu Threads chặn IP máy chủ và chỉ còn ảnh xem trước, API trả lỗi (`preview_only`) thay vì lưu một ảnh giống chụp màn hình. Trong Phím tắt, dòng `LỖI: …` không bắt đầu bằng `http` nên nhánh **Nếu … bắt đầu bằng http** sẽ hiện thông báo lỗi thay vì "Đã lưu". Thêm `&allow_preview=1` vào URL nếu bạn vẫn muốn tải ảnh xem trước.
+- **Lỗi nguồn là HTTP 424** (không còn 502/504). Phím tắt chỉ cần đọc nội dung phản hồi, không cần kiểm tra mã.
+- **/api/v1/solve báo "Chưa có đề bài" dù đã gửi ảnh chụp màn hình**: trong bước **Lấy nội dung của URL** đặt Phương thức **POST**, Body **Biểu mẫu**, thêm trường (tên tuỳ ý, ví dụ `image`) kiểu **Tệp** và chọn ảnh chụp màn hình; thêm trường **Văn bản** `text` nếu muốn gửi kèm chữ. Đừng chọn kiểu Văn bản cho ảnh. Nếu vẫn lỗi, thông báo mới ghi "Server nhận được: …", cho biết Phím tắt đang gửi những trường nào.
+- **Nhanh hơn**: dùng `choice=` của `/api/v1/choices` thay vì nhiều bước Nếu; `/api/v1/links` không còn thử mở từng link TikTok (đã đáng tin) nên trả gần như ngay.
+- **Nhắc minh bạch**: nếu máy chủ bật `DISCORD_WEBHOOK`, video/ảnh bạn tải qua máy chủ (không phải ảnh chụp màn hình giải bài) cũng được gửi lên kênh Discord của người quản trị.
+
+
+---
+
+# Cập nhật v7: sửa "Chưa có đề bài", tải hàng loạt, tải theo kênh
+
+## Sửa Phím tắt "Auto Solve from Share Sheet" bị "Chưa có đề bài"
+
+Triệu chứng: bước **Show** hiện “Chưa có đề bài…”. Nguyên nhân thường gặp nhất: ở các bước **Get contents of URL** (Lấy nội dung của URL) bạn chỉ điền địa chỉ `…/api/v1/solve` nên Phím tắt gửi một yêu cầu **GET trống**. Dòng đó đang **thu gọn** (chỉ thấy URL và mũi tên ›); ảnh ở bước **Convert … to JPEG** hay chữ ở bước **Ask for Text** phía trên **không tự đi theo**, phải đặt vào **Request Body**.
+
+Thử nhanh server có ổn không (trình duyệt trên iPhone): mở `{BASE}/api/v1/solve?key=KEY&text=2%2B2&format=text`. Ra đáp án thì server đúng, lỗi nằm ở Phím tắt.
+
+Sửa **cả 3 bước Get contents of URL** trong Phím tắt của bạn (nhánh Share Sheet, nhánh “Chụp ảnh màn hình”, nhánh “Nhập văn bản”). Ở mỗi bước, bấm mũi tên **›** ở cuối dòng để mở rộng rồi đặt:
+
+| Nhánh | Method | Request Body | Các field (bấm **Add new field**) |
+|---|---|---|---|
+| Share Sheet (`Shortcut Input` → JPEG) | **POST** | **Form** | **File**: Key `image`, Value = biến **JPEG image** (kết quả bước Convert) · **Text**: Key `key`, Value = API key · **Text**: Key `format`, Value `text` |
+| Chụp ảnh màn hình (`Take screenshot` → JPEG) | **POST** | **Form** | như trên, Value của `image` = **JPEG image** của bước Convert ngay phía trên |
+| Nhập văn bản (`Ask for Text`) | **POST** | **Form** | **Text**: Key `text`, Value = biến **Provided Input** (kết quả Ask for Text) · `key` · `format` = `text` |
+
+Lưu ý khi chọn biến cho `image`: bấm vào ô Value, chọn biến **JPEG image** (không phải “Screenshot”, không phải “Shortcut Input” nếu bạn đã Convert). Field `image` phải là kiểu **File**, không phải Text. Sai kiểu thì lỗi mới sẽ ghi “Server nhận được: …” cho biết Phím tắt thực sự gửi gì (vd. “POST, kiểu multipart/form-data, image: chữ 12 ký tự”).
+
+Bản gọn nhất (3 bước, không cần Convert vì server đọc được PNG/HEIC): **Take screenshot** (hoặc nhận ảnh từ Share Sheet) → **Get contents of URL** (`{BASE}/api/v1/solve`, POST, Form: `image` = File ảnh, `key`, `format=text`) → **Show** `Contents of URL`.
+
+Mọi lỗi kiểu này đều tự gửi lên Discord kèm chẩn đoán của AI (loại “cấu hình Phím tắt”).
+
+## Phím tắt "Tải hàng loạt" (nhiều link thành một ZIP)
+1. **Hỏi nhập liệu** (Văn bản nhiều dòng): "Dán các link, mỗi dòng một link". (Hoặc **Nhận** văn bản từ Share Sheet.)
+2. **Lấy nội dung của URL**: `{BASE}/api/v1/batch`, **POST**, Form: `key`, `urls` = **Nhập được cung cấp** (Text), `wait` = `75`, `format` = `text`.
+3. **Nếu** `Nội dung của URL` **bắt đầu bằng** `http` →
+   **Lấy nội dung của URL** (chính link ZIP đó, GET) → **Lưu tệp** (chọn thư mục Tệp).
+   **Khác**: **Hiển thị thông báo** `Nội dung của URL` (đang xử lý hoặc lỗi).
+
+Hết `wait` mà ZIP chưa xong thì dòng trả về là `ĐANG XỬ LÝ 2/5: <link>`; mở link đó (hoặc chạy lại bước 2 với `GET {BASE}/api/v1/batch/ID?key=KEY&format=text`) để lấy link ZIP khi xong. `kind` = `video` · `music` · `images` · `all`. Tối đa 30 link mỗi ZIP; ZIP giữ 30 phút.
+
+## Phím tắt "Tải theo kênh" (N video mới nhất của @username)
+1. **Hỏi nhập liệu**: "Tên kênh (vd. @tiktok)". Thêm **Hỏi nhập liệu** (Số) “Bao nhiêu video?” (1–30).
+2. **Lấy nội dung của URL**: `{BASE}/api/v1/channel`, **POST**, Form: `key`, `user` = tên kênh, `count` = số video, `zip` = `1`, `wait` = `75`, `format` = `text`.
+3. Giống bước 3 của "Tải hàng loạt": nếu bắt đầu bằng `http` thì lấy file ZIP và **Lưu tệp**.
+Muốn tự chọn video: bỏ `zip=1`, giữ `format=text` để nhận mỗi dòng một link video, đưa vào **Chọn từ Danh sách** rồi nối các link đã chọn vào `urls` của `/api/v1/batch`.
+
+Cần `TIKWM_RELAY` đã cập nhật: dán lại `cloudflare-api-worker.js` mới (có `/relay-user`) vào Worker, xem `CLOUDFLARE_API.md`.
+
+## Trên web
+Ô nhập chính nhận cả `@tên_kênh` (hiện lưới video để chọn rồi tải ZIP) và nhiều link cùng lúc (tự mở **Tải hàng loạt**). Mục **Lịch sử gần đây** nhớ 20 link trong chính trình duyệt này (không cần tài khoản, không gửi đi đâu); chạm để tải lại, **Xoá lịch sử** để dọn.

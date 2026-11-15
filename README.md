@@ -159,3 +159,25 @@ Cần có file `docs.html` nằm cạnh `app.py` trên GitHub.
 - Biến môi trường mới: `ERROR_AI`, `ERROR_AI_COOLDOWN`, `ERROR_AI_HOURLY`, `ERROR_LOG_FILE`, `SOLVE_LIMIT`, `DISCORD_PER_MIN`.
 - `requirements.txt` thêm `pillow-heif` để đọc ảnh HEIC của iPhone.
 - Mô hình thị giác mặc định `GROQ_VISION_MODEL` (đổi được trên Render nếu Groq gỡ model).
+
+
+## v6: Threads thật, phản hồi nhanh hơn, log file lên Discord
+
+- **Threads**: gallery-dl và yt-dlp không hỗ trợ Threads nên trước đây chỉ ra ảnh og (giống chụp màn hình). Giờ đọc thẳng dữ liệu nhúng trong trang bài (và trang `/embed/`, cả `threads.com` lẫn `threads.net`) để lấy video/ảnh/album gốc. Nếu chỉ còn ảnh xem trước, API trả lỗi rõ ràng (`code: preview_only`); thêm `allow_preview=1` nếu vẫn muốn tải ảnh đó. Web hiện dòng cảnh báo. Chưa kiểm thử với Threads thật (sandbox không ra được Internet), cấu trúc dựa trên dữ liệu nhúng của Instagram/Threads.
+- **Nhanh hơn**: gọi tikwm "đuổi nhau" (relay → chrome → requests, cách nhau ~1,1 giây, cái nào xong trước thắng), ngắt mạch 45 giây khi bị chặn IP (báo lỗi ngay, khỏi chờ), gộp yêu cầu trùng (`single_flight`), dùng lại kết quả cũ tới 2 giờ nếu tikwm đang lỗi, giải link rút gọn song song, `check=auto` chỉ thử mở link không phải TikTok, tạo zip tiết kiệm RAM.
+- **Mã trạng thái `424` thay `502/504`** cho lỗi từ nguồn (Cloudflare thay trang lỗi gốc bằng trang "502" của nó khi thấy 502/504 từ máy chủ gốc, Phím tắt không đọc được nội dung lỗi). Phím tắt và web chỉ dựa vào nội dung/`ok` nên không ảnh hưởng. Giả thuyết này chưa kiểm tra trên Render thật.
+- **Khi tikwm trả 403**: đó là tikwm chặn IP Render, code không tự sửa được. Đặt `TIKWM_RELAY` + `RELAY_KEY` (Cloudflare Worker, xem `CLOUDFLARE_API.md`) hoặc `OUTBOUND_PROXY`; lỗi API đã gợi ý cách này.
+- **Sửa 3 lỗi do AI chẩn đoán**: mô hình thị giác tối đa 3 ảnh mỗi yêu cầu (`MAX_VISION_IMAGES = 3`); dịch video không có lời thoại trả lỗi 400 rõ ràng; `/api/v1/choices` khi tikwm 403 trả 424 kèm cách sửa.
+- **`/api/v1/solve` báo "Chưa có đề bài" dù đã gửi ảnh**: giờ nhận ảnh ở mọi kiểu (tệp bất kỳ tên trường, base64, data URL, body ảnh thô, JSON), form lớn tới 25 MB; nếu vẫn không thấy thì lỗi ghi rõ "Server nhận được: ..." để biết Phím tắt đang gửi gì. Trong Phím tắt, ảnh phải là trường kiểu **Tệp** (Method POST), không phải Văn bản.
+- **Gửi chính file lên Discord**: khi có `DISCORD_WEBHOOK`, mỗi video/ảnh/nhạc/zip tải qua máy chủ được gửi kèm file thật lên kênh (kèm link bài, IP, tên file), tải dở thì không gửi, file giống nhau trong 10 phút chỉ gửi một lần. Tắt bằng `DISCORD_FILES=0`, bỏ `file` khỏi `DISCORD_EVENTS`, hoặc giới hạn dung lượng bằng `DISCORD_FILE_MAX_MB`. Ảnh chụp màn hình gửi tới `/api/v1/solve` KHÔNG được gửi lên Discord. Người chạy máy chủ nên cho người dùng biết điều này.
+- Biến môi trường mới: `DISCORD_FILES`, `DISCORD_FILE_MAX_MB`; `render.yaml` chạy `--threads 16 --keep-alive 30`.
+
+
+## v7: tải hàng loạt, lịch sử, tải theo kênh, AI chẩn đoán xịn hơn
+
+- **Tải hàng loạt**: dán nhiều link (web: ô chính hoặc mục "Tải hàng loạt"; API: `/api/v1/batch`) và nhận **một ZIP**. Chạy ở luồng nền, ghi ZIP ra đĩa tạm (không giữ trong RAM, không dính giới hạn ~100 giây của Cloudflare), có tiến độ từng link, `_ket_qua.txt` trong ZIP ghi link nào lỗi. Giới hạn `BATCH_MAX_ITEMS` (30) và `BATCH_MAX_MB` (150); mỗi IP tối đa 2 ZIP cùng lúc; ZIP giữ 30 phút.
+- **Lịch sử**: 20 link gần nhất lưu trong trình duyệt (localStorage, không tài khoản), chạm để tải lại, xoá từng mục hoặc tất cả.
+- **Tải theo kênh**: nhập `@tên_kênh` hoặc link hồ sơ TikTok, chọn N video mới nhất (1–30) rồi tải ZIP; API `/api/v1/channel` (`format=text`, `zip=1`). Danh sách lấy từ tikwm qua cùng đường relay/chống chặn IP, nên **cần dán lại `cloudflare-api-worker.js` mới (có `/relay-user`)** nếu bạn dùng `TIKWM_RELAY`. Chưa kiểm tra với tikwm thật (sandbox không ra được Internet): dạng JSON của `api/user/posts` dựa theo tài liệu công khai, kiểm thử bằng dữ liệu giả.
+- **Sửa "Chưa có đề bài"** trong Phím tắt giải bài: thông báo lỗi giờ nói đúng chuyện đã xảy ra (GET trống, body rỗng, sai kiểu field) và chỉ cách sửa từng bước trong Phím tắt; hướng dẫn riêng cho Phím tắt "Auto Solve from Share Sheet" ở cuối `PROMPT_PHIM_TAT_IPHONE.md`. Nguyên nhân gần như chắc chắn: bước "Get contents of URL" chưa đặt POST + Request Body nên ảnh không được gửi.
+- **AI chẩn đoán mọi lỗi, chỉ rõ chỗ trong code**: ghi cả lỗi cấu hình Phím tắt (kèm hình dạng yêu cầu); tự định vị `app.py:dòng` từ traceback, từ câu thông báo lỗi nằm sẵn trong mã và từ route + các hàm nó gọi; AI đọc mã **có số dòng** cùng bối cảnh dự án (tikwm 403 = chặn IP, Cloudflare đổi 502/504, Threads không có trong gallery-dl/yt-dlp, v.v.) để khỏi đề xuất sai; lỗi code thì AI viết lại hàm, `ast` kiểm tra rồi đính kèm file `.diff` (chỉ là đề xuất, không tự áp dụng, chưa chạy thử). Lỗi vượt `ERROR_AI_HOURLY` (mặc định 10) xếp hàng và tự được phân tích khi còn lượt.
+- Biến môi trường mới: `BATCH_MAX_ITEMS`, `BATCH_MAX_MB`; `ERROR_AI_HOURLY` mặc định 10.

@@ -2,6 +2,7 @@
 // Cùng các đường dẫn với bản Render để Phím tắt chỉ cần đổi địa chỉ:
 //   /api/v1/info  /api/v1/video  /api/v1/music  /api/v1/image  /api/v1/get  /health
 // Thêm /relay: trả nguyên JSON của tikwm, để server Render dùng làm cầu nối (TIKWM_RELAY).
+// Thêm /relay-user: danh sách bài của một kênh TikTok (tính năng 'Tải theo kênh' của bản Render dùng đường này khi có TIKWM_RELAY).
 // Biến cần đặt (Settings > Variables and Secrets): API_KEY = khoá bí mật do bạn tự đặt.
 // Không có: AI, ZIP, đổi sang JPEG, chất lượng yt-dlp (đã có ở bản Render).
 
@@ -99,6 +100,22 @@ async function tikwmRaw(url) {
   }
   throw new Error(last);
 }
+async function tikwmUserRaw(user, count, cursor) {
+  let last = "không rõ";
+  const u = `${TW}/api/user/posts?unique_id=${encodeURIComponent(user)}&count=${Math.min(Math.max(Number(count) || 12, 1), 30)}&cursor=${encodeURIComponent(cursor || 0)}`;
+  for (let i = 0; i < 3; i++) {
+    let r;
+    try { r = await fetch(u, { headers: { "User-Agent": UA, "Referer": TW + "/", "Accept": "application/json" } }); }
+    catch { last = "không kết nối được tikwm"; await sleep(500); continue; }
+    if (r.status !== 200) { last = `HTTP ${r.status}` + ([403, 429].includes(r.status) ? " (tikwm chặn IP máy chủ)" : ""); continue; }
+    let j; try { j = await r.json(); } catch { last = "tikwm trả về trang lạ (có thể chặn IP máy chủ)"; continue; }
+    if (j.code === 0 && j.data) return j;
+    last = String(j.msg || "tikwm không trả dữ liệu");
+    if (/limit/i.test(last)) { await sleep(1500); continue; }
+    break;
+  }
+  throw new Error(last);
+}
 async function getData(url) {
   const hit = memo.get(url);
   if (hit && hit.exp > Date.now()) return hit.data;
@@ -161,6 +178,12 @@ async function handleApi(req, url, env) {
   const p = await readParams(req);
   const given = req.headers.get("x-api-key") || p.key || "";
   if (!sameStr(given, env.API_KEY)) return json({ error: "Sai hoặc thiếu key." }, 401);
+  if (url.pathname === "/relay-user") { // danh sách bài của kênh, cho server Render
+    const user = String(p.user || "").trim();
+    if (!/^@?[\w.]{2,24}$/.test(user)) return json({ code: -1, msg: "Tên kênh không hợp lệ" }, 400);
+    try { return json(await tikwmUserRaw(user.startsWith("@") ? user : "@" + user, p.count, p.cursor)); }
+    catch (e) { return json({ code: -1, msg: e.message }, 502); }
+  }
   const tk = extractUrl(p.url);
   if (!isTikTok(tk)) return json({ error: "Link TikTok không hợp lệ." }, 400);
 
@@ -216,7 +239,7 @@ export default {
       if (url.pathname === "/health") return new Response("ok", { headers: { "Cache-Control": "no-store" } });
       if (url.pathname === "/") return json({ name: "beysnap-api", ok: true });
       if (url.pathname === "/dl") return await handleDl(url, env);
-      if (url.pathname.startsWith("/api/v1/") || url.pathname === "/relay") return await handleApi(req, url, env);
+      if (url.pathname.startsWith("/api/v1/") || url.pathname === "/relay" || url.pathname === "/relay-user") return await handleApi(req, url, env);
       return json({ error: "Không có đường dẫn này." }, 404);
     } catch (e) {
       return json({ error: "Lỗi nội bộ: " + (e && e.message || e) }, 500);

@@ -5,7 +5,7 @@ Cùng đường dẫn nên Phím tắt chỉ cần **đổi địa chỉ**.
 
 | Có | Không có (vẫn dùng bản Render) |
 |---|---|
-| `/api/v1/info`, `/video`, `/music`, `/image`, `/get`, `/health`, `/relay` | AI, ZIP, `fmt=jpg`, bản chất lượng cao yt-dlp, giao diện web |
+| `/api/v1/info`, `/video`, `/music`, `/image`, `/get`, `/health`, `/relay`, `/relay-user` | AI, ZIP, `fmt=jpg`, bản chất lượng cao yt-dlp, giao diện web |
 
 ## Cài đặt (khoảng 5 phút)
 1. Tạo tài khoản miễn phí ở cloudflare.com.
@@ -34,3 +34,7 @@ Nếu muốn giữ web và AI trên Render nhưng tikwm chặn IP Render, thêm 
 
 ## Giới hạn gói miễn phí (theo tài liệu Cloudflare)
 100.000 yêu cầu mỗi ngày; 10 ms thời gian CPU mỗi yêu cầu (chuyển tiếp file dạng stream không tốn CPU đáng kể); trang tài liệu không nêu giới hạn băng thông cho phản hồi stream. Chỉ dùng cá nhân.
+
+## Cập nhật: danh sách video của kênh (`/relay-user`)
+
+Tính năng **Tải theo kênh** (`/api/v1/channel`, ô nhập `@tên_kênh` trên web) lấy danh sách bài qua tikwm. Khi `TIKWM_RELAY` được đặt, server Render gọi `…/relay-user` của Worker (tự suy ra từ địa chỉ `…/relay`), nên **hãy dán lại file `cloudflare-api-worker.js` mới vào Worker và bấm Deploy**. Không cần đổi biến nào (vẫn dùng `API_KEY` của Worker và `RELAY_KEY` bên Render). Worker cũ vẫn chạy bình thường, chỉ thiếu danh sách kênh qua relay.

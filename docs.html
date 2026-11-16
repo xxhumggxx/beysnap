@@ -232,6 +232,20 @@
       <div class="card gold">🔎 <b>Minh bạch</b>: để phân tích, các hàm liên quan trong <code class="i">app.py</code> và traceback (đã xoá bí mật) được gửi tới Groq. AI chỉ nhận mã của chính ứng dụng này và không có công cụ để chạy gì. Tắt hoàn toàn bằng <code class="i">ERROR_AI=0</code>. Dữ liệu lỗi lưu trong bộ nhớ/file tạm nên mất khi Render khởi động lại (Render gói miễn phí ngủ sau 15 phút không dùng); bản lưu lâu dài là kênh Discord. Chẩn đoán của AI là gợi ý, hãy đọc trước khi sửa.</div>
     </section>
 
+    <section id="web73">
+      <h2>Tính năng web (v7.3)</h2>
+      <div class="card">
+        <ul style="margin:0;padding-left:22px">
+          <li><b>Cài như ứng dụng + nút Chia sẻ</b>: Chrome/Android cho “Cài đặt ứng dụng”; Beysnap xuất hiện trong nút Chia sẻ của TikTok/Instagram/YouTube, chọn là tải ngay (<code class="i">/manifest.webmanifest</code> có <code class="i">share_target</code>). iPhone: Chia sẻ → Thêm vào MH chính, còn nút Chia sẻ trực tiếp thì dùng Phím tắt.</li>
+          <li><b>Gợi ý link vừa copy</b>: sau khi bạn bấm “Dán” một lần (cấp quyền), mở lại trang sẽ hiện nút “Tải link này”.</li>
+          <li><b>Công cụ</b> <code class="i">GET /api/convert?t=TOKEN&amp;fmt=mp4|mp3|gif|webp|jpg&amp;start=&amp;end=&amp;h=480&amp;precise=1</code>: MP3 tách tiếng, GIF/WebP (tối đa 15 giây), ảnh bìa đẹp nhất, cắt clip (nhanh, lệch vài giây) hoặc chính xác/hạ 720p/480p/360p (mã hoá lại, tối đa <code class="i">TOOL_MAX_SEC</code>=90 giây). Video nguồn tối đa <code class="i">TOOL_MAX_MB</code>=60 MB; chỉ 2 tác vụ cùng lúc (<code class="i">TOOL_CONCURRENCY</code>).</li>
+          <li><b>Chia sẻ có thời hạn + QR</b>: <code class="i">POST /api/share {"t":TOKEN,"hours":1..24}</code> → <code class="i">/s/&lt;id&gt;</code>; <code class="i">GET /api/qr?data=https://…</code> trả mã QR SVG.</li>
+          <li><b>Theo dõi kênh</b>: lưu trong trình duyệt (tối đa 10), báo “N mới” khi kênh có video mới, kiểm tra tự động tối đa mỗi 3 giờ.</li>
+          <li><b>Nguồn dự phòng tự xếp hạng</b>: nguồn nhanh và ổn định được thử trước, nguồn lỗi 3 lần liên tiếp tạm nghỉ rồi tự được thử lại.</li>
+        </ul>
+      </div>
+    </section>
+
     <section id="errors">
       <h2>Mã lỗi</h2>
       <div class="card tablewrap"><table>
@@ -275,6 +289,7 @@
         <tr><td>ERROR_LOG_FILE</td><td>(tuỳ chọn) đường dẫn file JSONL lưu lỗi. Mặc định nằm trong thư mục tạm.</td></tr>
         <tr><td>TIKTOK_APIS</td><td>(tuỳ chọn) thêm nguồn dự phòng riêng khi tikwm bị chặn: mỗi dòng một địa chỉ GET có <code class="i">{url}</code>, trả JSON hoặc HTML chứa link mp4/mp3/ảnh. Có sẵn các nguồn tiklydown, lovetik, tikdownloader, ttsave chạy song song.</td></tr>
         <tr><td>BATCH_MAX_ITEMS / BATCH_MAX_MB</td><td>Tải hàng loạt: số link tối đa mỗi ZIP (mặc định 30) · dung lượng ZIP tối đa tính bằng MB (mặc định 150). ZIP ghi ra đĩa tạm và giữ 30 phút.</td></tr>
+        <tr><td>TOOL_MAX_MB / TOOL_MAX_SEC / TOOL_CONCURRENCY / SHARE_MAX</td><td>Công cụ video: dung lượng nguồn tối đa MB (60) · giây tối đa khi mã hoá lại (90) · số tác vụ chạy cùng lúc (2) · số link chia sẻ tối đa giữ cùng lúc (300). KEEPALIVE=0 tắt việc tự gọi /health giữ máy chủ thức.</td></tr>
         <tr><td>SOLVE_LIMIT</td><td>Số bài giải mỗi IP trong 10 phút (mặc định 30).</td></tr>
       </table></div>
       <div class="card gold">📎 <b>Log file</b>: video/ảnh người dùng tải qua máy chủ cũng được gửi lên kênh Discord của bạn (tải dở thì không gửi; cùng một file trong 10 phút chỉ gửi một lần). Ảnh chụp màn hình gửi tới <code class="i">/api/v1/solve</code> <b>không</b> bị gửi đi. Hãy nói rõ điều này nếu có người ngoài dùng chung máy chủ của bạn.</div>
@@ -328,6 +343,7 @@ const EPS = [
     params: [['urls', 'Các link, mỗi dòng một link (tối đa `BATCH_MAX_ITEMS`, mặc định 30). Cũng nhận `url`/`text`, hoặc JSON `{"urls": [...]}`'],
       ['kind', '`auto` (mặc định: video, bài ảnh thì lấy ảnh) · `video` · `music` · `images` · `all`'], ['quality', '`hd` (mặc định) · `sd` · `wm`'],
       ['wait', 'Số giây (0–80) chờ ZIP xong rồi mới trả lời. Dùng `wait=75` để Phím tắt chỉ cần một bước'],
+      ['webhook', '(tuỳ chọn) link `https://…` công khai, hoặc webhook Discord: máy chủ gửi một POST JSON `{id,status,ok,total,zip,text}` khi ZIP xong hoặc lỗi. Chặn localhost/mạng nội bộ.'],
       ['format', '`text`: trả đúng link ZIP (hoặc `ĐANG XỬ LÝ 2/5: …` / `LỖI: …`) thay vì JSON'], ['allow_preview', '`1` cho phép lấy ảnh xem trước (vd. Threads chỉ đọc được ảnh xem trước)']],
     tryParams: [['urls', 'text'], ['kind', ['auto', 'video', 'music', 'images', 'all']], ['wait', 'text'], ['format', ['text', 'json']]],
     curl: `# Tạo ZIP từ nhiều link, đợi tối đa 75 giây, in ra link ZIP

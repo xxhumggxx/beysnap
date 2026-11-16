@@ -377,3 +377,7 @@ Cần `TIKWM_RELAY` đã cập nhật: dán lại `cloudflare-api-worker.js` m�
 
 ## Trên web
 Ô nhập chính nhận cả `@tên_kênh` (hiện lưới video để chọn rồi tải ZIP) và nhiều link cùng lúc (tự mở **Tải hàng loạt**). Mục **Lịch sử gần đây** nhớ 20 link trong chính trình duyệt này (không cần tài khoản, không gửi đi đâu); chạm để tải lại, **Xoá lịch sử** để dọn.
+
+## Cập nhật v7.3
+- Webhook khi ZIP xong: thêm tham số `webhook=https://...` (hoặc webhook Discord) vào `/api/v1/batch` để máy chủ báo khi xong, Phím tắt không cần chờ.
+- Chia sẻ có thời hạn: `POST /api/share` rồi gửi link `/s/<id>` cho người khác.

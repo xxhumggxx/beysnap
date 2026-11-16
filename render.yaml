@@ -7,7 +7,7 @@ services:
     buildCommand: pip install -r requirements.txt
     # BẮT BUỘC -w 1: link tải lưu trong bộ nhớ, nhiều worker sẽ làm link hết hạn giả.
     # --threads 16: nhiều yêu cầu song song (Phím tắt gọi liên tiếp); --keep-alive 30: giữ kết nối, bớt độ trễ bắt tay
-    startCommand: gunicorn -w 1 --threads 16 --keep-alive 30 --timeout 300 -b 0.0.0.0:$PORT app:app
+    startCommand: gunicorn -w 1 --threads 32 --keep-alive 30 --timeout 300 -b 0.0.0.0:$PORT app:app
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.7
@@ -41,3 +41,7 @@ services:
         value: "150"          # tải hàng loạt: dung lượng ZIP tối đa (MB), ghi ra đĩa tạm, giữ 30 phút
       - key: SOLVE_LIMIT
         value: "30"           # số bài giải mỗi IP trong 10 phút
+      - key: TOOL_MAX_MB
+        value: "60"
+      - key: TOOL_MAX_SEC
+        value: "90"

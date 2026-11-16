@@ -185,3 +185,11 @@ Cần có file `docs.html` nằm cạnh `app.py` trên GitHub.
 ## v7.1: nhiều nguồn dự phòng khi tikwm bị chặn
 
 Khi tikwm lỗi/chặn IP, server chạy **song song** thêm các dịch vụ tải TikTok khác (tiklydown, lovetik, tikdownloader, ttsave) và dùng kết quả đầu tiên hợp lệ, rồi mới tới trang TikTok, gallery-dl, yt-dlp. Thêm nguồn riêng bằng `TIKTOK_APIS` (mỗi dòng một địa chỉ có `{url}`). Tải theo kênh có thêm đường yt-dlp. **Chưa kiểm tra với các dịch vụ thật** (sandbox không ra Internet, các dịch vụ ngoài có thể đổi/chết bất cứ lúc nào); đọc phản hồi theo kiểu lỏng và kiểm thử bằng dữ liệu giả.
+
+## v7.2 — Thêm nhiều trang, tăng tốc
+- Hỗ trợ thêm: YouTube/Shorts, Bilibili, VK, OK.ru, Telegram, LinkedIn, Rumble, Streamable, 9GAG, Douyin, Kuaishou, Mastodon, Bandcamp, CapCut, Kick, Giphy, Loom... (qua yt-dlp/gallery-dl, chưa thử trực tiếp với từng trang).
+- Tốc độ: trang chủ/docs nạp RAM + gzip sẵn + ETag (304); JSON/text ≥700 B nén gzip; `--threads 32`; tự khởi động nóng và tự gọi `/health` mỗi 10 phút để Render không ngủ (`KEEPALIVE=0` để tắt).
+
+## v7.3 — Tính năng mới
+PWA + nhận link từ nút Chia sẻ, gợi ý link vừa copy, công cụ video (MP3/GIF/WebP/ảnh bìa/cắt clip/hạ độ phân giải), chia sẻ link có thời hạn + QR, theo dõi kênh (lưu trong trình duyệt), webhook khi ZIP xong, nguồn dự phòng tự xếp hạng theo độ nhanh. Xem mục "Tính năng web (v7.3)" trong /docs. Thêm thư viện `segno` (QR). Biến mới: `TOOL_MAX_MB`, `TOOL_MAX_SEC`, `TOOL_CONCURRENCY`, `SHARE_MAX`.
+Lưu ý Render free: mã hoá lại video rất chậm (CPU yếu) nên chỉ cho đoạn ≤90 giây; cắt nhanh/MP3/GIF nhẹ hơn nhiều.

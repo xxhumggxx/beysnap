@@ -5,6 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Beysnap · Tải video, ảnh &amp; nhạc</title>
 <meta name="theme-color" content="#f5f5f7">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Beysnap">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -173,6 +178,20 @@
     #pasteBtn { display:none; } .tag { font-size:17px; } .tab { padding:7px 4px; font-size:14px; }
   }
   @media (prefers-reduced-motion: reduce) { .loading .bell, .panel.on { animation:none; } }
+  .clip { margin-top:10px; display:flex; gap:8px; align-items:center; background:var(--fill); border-radius:14px; padding:8px 12px; font-size:14px; }
+  .clip span.u { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--muted); }
+  .tools { margin-top:14px; } .tools summary { cursor:pointer; font-weight:600; font-size:15px; }
+  .tools .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:10px; }
+  .tools input[type=number] { width:84px; font:inherit; padding:8px 10px; border-radius:12px; border:1px solid var(--line); background:var(--card); color:inherit; }
+  .tools select, #batchHook { font:inherit; padding:8px 10px; border-radius:12px; border:1px solid var(--line); background:var(--card); color:inherit; }
+  #batchHook { width:100%; margin-top:10px; box-sizing:border-box; }
+  .fchips { display:flex; flex-wrap:wrap; gap:8px; }
+  .fchip { display:inline-flex; align-items:center; gap:6px; border-radius:999px; background:var(--fill); padding:6px 6px 6px 12px; font-size:14px; cursor:pointer; }
+  .fchip b { background:#ff3b30; color:#fff; border-radius:999px; font-size:12px; padding:1px 7px; }
+  .fchip i { font-style:normal; color:var(--muted); padding:0 6px; }
+  #shareDlg { border:0; border-radius:20px; padding:22px; max-width:340px; width:calc(100% - 32px); text-align:center; background:var(--card); color:inherit; }
+  #shareDlg::backdrop { background:rgba(0,0,0,.4); } #shareDlg img { width:200px; height:200px; background:#fff; border-radius:12px; padding:6px; }
+  #shareDlg input { width:100%; box-sizing:border-box; font:inherit; font-size:13px; padding:9px 10px; border-radius:12px; border:1px solid var(--line); margin:10px 0; background:var(--fill); color:inherit; }
 </style>
 </head>
 <body>
@@ -196,6 +215,8 @@
     <button type="button" class="btn soft" id="pasteBtn">Dán</button>
     <button class="btn go" id="go">Tải ⬇</button>
   </form>
+
+  <div class="clip" id="clipChip" style="display:none"><span>📋</span><span class="u" id="clipUrl"></span><button class="mini" id="clipGo" type="button" style="color:var(--blue,#0a84ff)">Tải link này</button><button class="mini" id="clipX" type="button" aria-label="Ẩn">✕</button></div>
 
   <div class="alert" id="err" role="alert"></div>
   <div class="rescue" id="rescue">
@@ -222,7 +243,29 @@
 
     <div class="panel" id="p-video"><div class="list" id="vlist"></div>
       <div class="more" id="moreWrap"><button class="btn gold" id="hqBtn" type="button">🔍 Tìm chất lượng cao hơn (có thể mất vài giây)</button></div>
-      <p class="note" id="vnote"></p></div>
+      <p class="note" id="vnote"></p>
+      <details class="box tools" id="tools">
+        <summary>🧰 Công cụ: đổi định dạng · cắt clip · GIF · ảnh bìa · chia sẻ/QR</summary>
+        <div class="row">
+          <select id="toolFmt" aria-label="Định dạng đầu ra">
+            <option value="mp4">🎬 MP4 gốc</option><option value="mp4:720">🎬 MP4 720p</option><option value="mp4:480">🎬 MP4 480p (nhẹ)</option>
+            <option value="mp4:360">🎬 MP4 360p (rất nhẹ)</option><option value="mp3">🎵 MP3 (tách tiếng)</option>
+            <option value="gif">🌀 GIF</option><option value="webp">🌀 WebP động</option><option value="jpg">🖼️ Ảnh bìa đẹp nhất</option>
+          </select>
+          <label>Từ giây <input id="toolStart" type="number" min="0" step="0.5" placeholder="0"></label>
+          <label>đến <input id="toolEnd" type="number" min="0" step="0.5" placeholder="hết"></label>
+        </div>
+        <div class="row">
+          <label><input id="toolPrecise" type="checkbox"> Cắt chính xác (chậm hơn)</label>
+          <span class="sp" style="flex:1"></span>
+          <button class="btn go" id="toolGo" type="button">Tạo &amp; tải</button>
+        </div>
+        <div class="row">
+          <select id="shareHrs" aria-label="Thời hạn link"><option value="1">Link sống 1 giờ</option><option value="6">6 giờ</option><option value="24">24 giờ</option></select>
+          <button class="btn soft" id="shareBtn" type="button">📱 Chia sẻ / mã QR</button>
+        </div>
+        <p class="note" id="toolNote">Để trống “từ/đến” để lấy cả video. Cắt nhanh không mã hoá lại nên điểm cắt có thể lệch vài giây; tick “chính xác” hoặc chọn 720p/480p thì máy chủ mã hoá lại (tối đa 90 giây, GIF/WebP tối đa 15 giây, video nguồn tối đa 60 MB).</p>
+      </details></div>
 
     <div class="panel" id="p-photo">
       <div class="toolbar">
@@ -271,6 +314,7 @@
       <select id="chanCount" aria-label="Số video mới nhất"><option>5</option><option selected>10</option><option>20</option><option>30</option></select>
       <span style="color:var(--muted)">video mới nhất</span>
       <button class="btn soft" id="chanReload" type="button">Tải lại danh sách</button>
+      <button class="btn soft" id="chanFollow" type="button">☆ Theo dõi</button>
     </div>
     <div class="toolbar">
       <button class="btn soft" id="chanAll" type="button">Chọn tất cả</button>
@@ -292,9 +336,16 @@
       <span class="sp"></span>
       <button class="btn go" id="batchGo" type="button">Tạo ZIP</button>
     </div>
+    <input id="batchHook" type="url" placeholder="(Tuỳ chọn) Webhook https://… hoặc link webhook Discord: báo khi ZIP xong" autocomplete="off" aria-label="Webhook khi xong">
     <div id="batchJob"></div>
     <p class="note">Máy chủ tải từng link rồi gộp thành một ZIP. Hãy giữ trang mở tới khi có nút tải; ZIP được giữ 30 phút.</p>
   </details>
+
+  <section class="sheet" id="followBox" style="display:none">
+    <div class="sheet-h"><b>⭐ Kênh theo dõi</b><button class="mini" id="followCheck" type="button" style="color:var(--blue,#0a84ff)">Kiểm tra video mới</button></div>
+    <div class="fchips" id="followList"></div>
+    <p class="note">Lưu trong trình duyệt này (tối đa 10 kênh), không cần tài khoản. Bấm tên kênh để xem video mới nhất.</p>
+  </section>
 
   <section class="sheet" id="histBox" style="display:none">
     <div class="sheet-h"><b>🕘 Lịch sử gần đây</b><button class="mini" id="histClear" type="button">Xoá lịch sử</button></div>
@@ -310,6 +361,9 @@
   <button class="btn soft" id="lbSave" type="button">⬇ Tải ảnh này</button>
   <button class="btn soft" id="lbNext" type="button">Sau ›</button>
   <button class="btn gold" id="lbClose" type="button">Đóng</button></div></dialog>
+<dialog id="shareDlg"><h3 style="margin:0 0 4px">Chia sẻ link tải</h3><p class="note" id="shareNote" style="margin:0 0 10px"></p>
+  <img id="shareQr" alt="Mã QR" width="200" height="200"><input id="shareUrl" readonly aria-label="Link chia sẻ">
+  <div style="display:flex;gap:8px;justify-content:center"><button class="btn go" id="shareCopy" type="button">Sao chép</button><button class="btn soft" id="shareClose" type="button">Đóng</button></div></dialog>
 <div class="toast" id="toast" role="status"></div>
 
 <script>
@@ -349,7 +403,7 @@ async function save(item, labelEl, bar) {
   const old = labelEl ? labelEl.textContent : '';
   try {
     if (labelEl) labelEl.textContent = item.slow ? 'Đang xử lý… (vài phút)' : 'Đang tải…';
-    const r = await fetch(dl(item.token));
+    const r = await fetch(item.href || dl(item.token));
     if (!r.ok) { let m = 'Lỗi ' + r.status; try { m = (await r.json()).error || m; } catch {} throw new Error(m); }
     const total = +r.headers.get('Content-Length') || 0, rd = r.body.getReader(), parts = []; let got = 0;
     for (;;) {
@@ -434,7 +488,7 @@ async function rescue(probe) {
   };
 }
 $('pasteBtn').onclick = async () => {
-  try { $('url').value = extractUrl(await navigator.clipboard.readText()); if (/(tiktok|instagram|facebook|fb\.watch|x\.com|twitter|threads|pinterest|pin\.it|reddit|bsky|tumblr)/i.test($('url').value)) $('form').requestSubmit(); }
+  try { $('url').value = extractUrl(await navigator.clipboard.readText()); try { localStorage.setItem('beysnap_clip', '1'); } catch {} if (/(tiktok|instagram|facebook|fb\.watch|x\.com|twitter|threads|pinterest|pin\.it|reddit|bsky|tumblr)/i.test($('url').value)) $('form').requestSubmit(); }
   catch { $('url').focus(); toast('Hãy dán bằng Ctrl+V / giữ để dán'); }
 };
 $('url').addEventListener('paste', () => setTimeout(() => { if (/(tiktok|instagram|facebook|fb\.watch|x\.com|twitter|threads|pinterest|pin\.it|reddit|bsky|tumblr)/i.test($('url').value)) $('form').requestSubmit(); }, 30));
@@ -751,7 +805,7 @@ function openBatch(links) {
 $('batchGo').onclick = () => {
   const n = new Set($('batchUrls').value.match(/https?:\/\/[^\s]+/g) || []).size;
   if (!n) { showErr('Chưa thấy link nào. Mỗi dòng một link.'); return; }
-  runJob(() => post('/api/batch', { urls: $('batchUrls').value, kind: $('batchKind').value }), $('batchJob'), $('batchGo'));
+  runJob(() => post('/api/batch', { urls: $('batchUrls').value, kind: $('batchKind').value, webhook: $('batchHook').value.trim() }), $('batchJob'), $('batchGo'));
 };
 
 /* ---------- tải theo kênh: @tên_kênh -> chọn N video mới nhất ---------- */
@@ -764,6 +818,7 @@ function parseChannelInput(t) {
 const mmss = s => s ? Math.floor(s / 60) + ':' + String(Math.floor(s % 60)).padStart(2, '0') : '';
 function chanRefresh() { $('chanZip').textContent = chanSel.size ? `📦 Tải ZIP (${chanSel.size})` : '📦 Tải ZIP'; $('chanZip').disabled = !chanSel.size; }
 function renderChannel() {
+  followBtn();
   $('chanTitle').textContent = `👤 @${chan.user}${chan.nickname ? ' · ' + chan.nickname : ''}`;
   const g = $('chanGrid'); g.replaceChildren();
   chan.videos.forEach((v, i) => {
@@ -785,7 +840,7 @@ async function loadChannel(user) {
   try {
     chan = await post('/api/channel', { user: '@' + user, count: +$('chanCount').value || 10 });
     chanSel.clear(); chan.videos.forEach(v => chanSel.add(v.id));
-    renderChannel();
+    renderChannel(); followSeen(chan);
     histAdd({ url: '@' + user, title: chan.nickname || '@' + user, author: '@' + user, cover: (chan.videos[0] || {}).cover || '', kind: 'channel' });
     $('chanBox').scrollIntoView({ behavior: 'smooth', block: 'start' });
   } catch (ex) { showErr(ex.message); }
@@ -797,6 +852,112 @@ $('chanNone').onclick = () => { chanSel.clear(); renderChannel(); };
 $('chanClose').onclick = () => { $('chanBox').style.display = 'none'; };
 $('chanZip').onclick = () => runJob(() => post('/api/channel/zip', { user: '@' + chan.user, ids: [...chanSel], kind: $('chanKind').value }), $('chanJob'), $('chanZip'));
 histRender();
+
+/* ---------- PWA: cài lên màn hình chính + nhận link từ nút Chia sẻ ---------- */
+if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('/sw.js').catch(() => {});
+(function shareTarget() {
+  try {
+    const q = new URLSearchParams(location.search);
+    const raw = [q.get('url'), q.get('text'), q.get('title')].filter(Boolean).join(' ');
+    if (!raw) return;
+    const link = (raw.match(/https?:\/\/[^\s]+/) || [])[0];
+    history.replaceState(null, '', '/');
+    if (link) { $('url').value = link; $('form').requestSubmit(); }
+  } catch {}
+})();
+
+/* ---------- gợi ý link vừa sao chép ---------- */
+const SITE_RE = /^https?:\/\/[^\s]*(tiktok|instagram|facebook|fb\.watch|fb\.com|x\.com|twitter|threads|pinterest|pin\.it|reddit|redd\.it|bsky|tumblr|youtu|bilibili|vimeo|dailymotion|soundcloud|twitch|snapchat|vk\.com|t\.me|linkedin|rumble|streamable)/i;
+let clipSeen = '';
+async function clipCheck() {
+  try {
+    if (!navigator.clipboard || !navigator.clipboard.readText || !document.hasFocus() || localStorage.getItem('beysnap_clip') !== '1') return;
+    const t = extractUrl(await navigator.clipboard.readText());
+    if (!SITE_RE.test(t) || t === clipSeen || t === $('url').value.trim() || t === curUrl) { return; }
+    clipSeen = t; $('clipUrl').textContent = t; $('clipChip').style.display = 'flex';
+  } catch {}
+}
+$('clipGo').onclick = () => { $('url').value = $('clipUrl').textContent; $('clipChip').style.display = 'none'; $('form').requestSubmit(); };
+$('clipX').onclick = () => { $('clipChip').style.display = 'none'; };
+window.addEventListener('focus', clipCheck);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) clipCheck(); });
+setTimeout(clipCheck, 400);
+
+/* ---------- công cụ: đổi định dạng, cắt clip, GIF/WebP, ảnh bìa ---------- */
+const toolSrc = () => cur && (cur.videos || []).find(v => v.token && v.quality !== 'hq' && !v.direct_only);
+const EXT = { mp4: 'mp4', mp3: 'mp3', gif: 'gif', webp: 'webp', jpg: 'jpg' };
+$('toolGo').onclick = async () => {
+  const v = toolSrc(); if (!v) { showErr('Không có bản video để xử lý.'); return; }
+  const [f, h] = $('toolFmt').value.split(':'), q = new URLSearchParams({ t: v.token, fmt: f });
+  const s0 = $('toolStart').value, e0 = $('toolEnd').value;
+  if (s0) q.set('start', s0); if (e0) q.set('end', e0); if (h) q.set('h', h); if ($('toolPrecise').checked) q.set('precise', '1');
+  const b = $('toolGo'); b.disabled = true; showErr('');
+  const base = (v.filename || 'beysnap').replace(/\.\w+$/, '') + (f === 'jpg' ? '_bia' : (s0 || e0 ? '_cat' : ''));
+  const ok = await save({ href: '/api/convert?' + q, filename: base + '.' + EXT[f] }, b);
+  b.disabled = false; setTimeout(() => { b.textContent = 'Tạo & tải'; }, 2500);
+};
+
+/* ---------- chia sẻ có thời hạn + mã QR ---------- */
+$('shareBtn').onclick = async () => {
+  const v = toolSrc() || (cur && cur.audio); if (!v) { showErr('Không có file để chia sẻ.'); return; }
+  const b = $('shareBtn'); b.disabled = true;
+  try {
+    const r = await post('/api/share', { t: v.token, hours: +$('shareHrs').value });
+    $('shareUrl').value = r.url; $('shareQr').style.display = ''; $('shareQr').src = '/api/qr?data=' + encodeURIComponent(r.url);
+    $('shareQr').onerror = () => { $('shareQr').style.display = 'none'; };
+    $('shareNote').textContent = 'Quét QR bằng điện thoại khác hoặc gửi link. Hết hạn sau ' + (r.expires_in / 3600) + ' giờ.';
+    $('shareDlg').showModal();
+  } catch (ex) { showErr(ex.message); } finally { b.disabled = false; }
+};
+$('shareCopy').onclick = () => copy($('shareUrl').value, 'Đã sao chép link');
+$('shareClose').onclick = () => $('shareDlg').close();
+
+/* ---------- theo dõi kênh (lưu trong trình duyệt) ---------- */
+const FKEY = 'beysnap_follow_v1';
+const followLoad = () => { try { return JSON.parse(localStorage.getItem(FKEY)) || []; } catch { return []; } };
+const followSave = l => { try { localStorage.setItem(FKEY, JSON.stringify(l)); } catch {} };
+function followRender() {
+  const l = followLoad(), box = $('followList'); $('followBox').style.display = l.length ? '' : 'none';
+  box.replaceChildren(...l.map(f => {
+    const c = el('span', { class: 'fchip' }, el('span', { text: '@' + f.user }), f.new ? el('b', { text: f.new + ' mới' }) : '',
+      el('i', { text: '✕', title: 'Bỏ theo dõi', onclick: e => { e.stopPropagation(); followSave(followLoad().filter(x => x.user !== f.user)); followRender(); followBtn(); } }));
+    c.onclick = () => loadChannel(f.user); return c;
+  }));
+}
+function followBtn() {
+  if (!chan) return; const on = followLoad().some(f => f.user === chan.user);
+  $('chanFollow').textContent = on ? '★ Đang theo dõi' : '☆ Theo dõi';
+}
+function followSeen(c) {
+  const l = followLoad(), f = l.find(x => x.user === c.user); if (!f) return;
+  f.seen = c.videos.map(v => v.id).slice(0, 40); f.new = 0; f.checked = Date.now(); followSave(l); followRender();
+}
+$('chanFollow').onclick = () => {
+  const l = followLoad(), i = l.findIndex(f => f.user === chan.user);
+  if (i >= 0) l.splice(i, 1);
+  else if (l.length >= 10) { toast('Tối đa 10 kênh theo dõi'); return; }
+  else l.push({ user: chan.user, seen: chan.videos.map(v => v.id).slice(0, 40), new: 0, checked: Date.now() });
+  followSave(l); followRender(); followBtn();
+};
+let followBusy = false;
+async function followCheckAll(manual) {
+  if (followBusy) return; followBusy = true;
+  const b = $('followCheck'); if (manual) b.disabled = true;
+  try {
+    for (const f of followLoad()) {
+      if (!manual && Date.now() - (f.checked || 0) < 3 * 3600e3) continue;
+      try {
+        const c = await post('/api/channel', { user: '@' + f.user, count: 10 });
+        const l = followLoad(), x = l.find(y => y.user === f.user); if (!x) continue;
+        const seen = new Set(x.seen || []); x.new = c.videos.filter(v => !seen.has(v.id)).length; x.checked = Date.now();
+        followSave(l); followRender();
+      } catch (ex) { if (manual) toast('@' + f.user + ': ' + ex.message.slice(0, 60)); }
+      await wait(1500);
+    }
+  } finally { followBusy = false; b.disabled = false; }
+}
+$('followCheck').onclick = () => followCheckAll(true);
+followRender(); setTimeout(() => followCheckAll(false), 2500);
 </script>
 </body>
 </html>

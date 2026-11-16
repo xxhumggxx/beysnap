@@ -15,6 +15,8 @@ import base64
 import collections
 import copy
 import difflib
+import gzip
+import html
 import hashlib
 import hmac
 import html as htmllib
@@ -77,11 +79,23 @@ OTHER_HOSTS = ("instagram.com", "facebook.com", "fb.watch", "fb.com", "x.com", "
                "threads.net", "threads.com", "pinterest.com", "pin.it", "reddit.com", "redd.it",
                "bsky.app", "tumblr.com", "snapchat.com", "likee.video", "imgur.com", "flickr.com",
                "weibo.com", "xiaohongshu.com", "xhslink.com", "vimeo.com", "dailymotion.com",
-               "soundcloud.com", "twitch.tv")
+               "soundcloud.com", "twitch.tv",
+               # thêm: tải bằng yt-dlp / gallery-dl (đường chung)
+               "youtube.com", "youtu.be", "bilibili.com", "b23.tv", "streamable.com", "9gag.com", "rumble.com",
+               "odysee.com", "coub.com", "vk.com", "vk.ru", "ok.ru", "t.me", "telegram.me", "linkedin.com",
+               "kuaishou.com", "douyin.com", "ixigua.com", "bitchute.com", "mastodon.social", "mastodon.online",
+               "lemon8-app.com", "capcut.com", "kick.com", "gfycat.com", "redgifs.com",
+               "tenor.com", "giphy.com", "medal.tv", "mixcloud.com", "bandcamp.com", "ted.com",
+               "nicovideo.jp", "triller.co", "bigo.tv", "likee.com", "archive.org", "loom.com", "wistia.com")
 SITE_NAMES = (("instagram.com", "Instagram"), ("facebook.com", "Facebook"), ("fb.", "Facebook"),
               ("x.com", "X"), ("twitter.com", "X"), ("threads.", "Threads"), ("pin", "Pinterest"),
               ("reddit.com", "Reddit"), ("redd.it", "Reddit"), ("bsky.app", "Bluesky"),
-              ("tumblr.com", "Tumblr"), ("snapchat.com", "Snapchat"), ("tiktok.com", "TikTok"))
+              ("tumblr.com", "Tumblr"), ("snapchat.com", "Snapchat"), ("tiktok.com", "TikTok"),
+              ("youtu", "YouTube"), ("bilibili", "Bilibili"), ("b23.tv", "Bilibili"), ("vk.", "VK"), ("ok.ru", "OK.ru"),
+              ("t.me", "Telegram"), ("telegram", "Telegram"), ("linkedin", "LinkedIn"), ("douyin", "Douyin"),
+              ("kuaishou", "Kuaishou"), ("twitch", "Twitch"), ("vimeo", "Vimeo"), ("dailymotion", "Dailymotion"),
+              ("soundcloud", "SoundCloud"), ("rumble", "Rumble"), ("streamable", "Streamable"), ("9gag", "9GAG"),
+              ("imgur", "Imgur"), ("mastodon", "Mastodon"), ("bandcamp", "Bandcamp"), ("capcut", "CapCut"))
 # (tuỳ chọn) nội dung file cookies.txt (định dạng Netscape) để tải bài Instagram/Facebook/Threads cần đăng nhập
 COOKIES_TXT = os.environ.get("COOKIES_TXT", "")
 COOKIE_FILE = ""
@@ -1011,13 +1025,41 @@ def alt_normalize(raw, url, title="", author="", cover=""):
             "audio": {"label": "Nhạc nền", "url": aud, "filename": f"{base}_music.mp3"} if aud else None, "images": images}
 
 
-def _alt_get(name, fn):
+_prov = {}  # tên nguồn -> {"lat": độ trễ trung bình (EWMA, giây), "fail": số lần lỗi liên tiếp, "until": giờ hết tạm nghỉ}
+
+
+def prov_score(name):
+    """Điểm càng thấp càng nên thử trước. Nguồn lỗi liên tiếp bị tạm nghỉ (xếp cuối) rồi tự được thử lại."""
+    st = _prov.get(name)
+    if not st:
+        return 3.0  # chưa biết: thử sau các nguồn đã chứng tỏ nhanh nhưng trước nguồn đang lỗi
+    pen = 100 if st["until"] > time.time() else 0
+    return st["lat"] + 2.0 * st["fail"] + pen
+
+
+def prov_record(name, ok, secs):
+    st = _prov.setdefault(name, {"lat": secs, "fail": 0, "until": 0})
+    if ok:
+        st["lat"] = 0.7 * st["lat"] + 0.3 * secs
+        st["fail"] = 0
+        st["until"] = 0
+    else:
+        st["fail"] += 1
+        if st["fail"] >= 3:
+            st["until"] = time.time() + min(900, 60 * st["fail"])
+
+
+def _alt_get(name, fn, delay=0.0, stop=None):
     ok = False
+    if delay and stop is not None and stop.wait(delay):
+        raise RuntimeError("đã có nguồn khác trả kết quả")
+    t0 = time.time()
     try:
         out = fn()
         ok = True
         return out
     finally:
+        prov_record(name, ok, time.time() - t0)
         a, b = _alt_stat.get(name, (0, 0))
         _alt_stat[name] = (a + 1, b) if ok else (a, b + 1)
 
@@ -1066,7 +1108,10 @@ def alt_providers(url):
 
 def alt_fetch(url):
     """Chạy mọi nguồn dự phòng song song; trả kết quả hợp lệ đầu tiên (hoặc ném lỗi tổng hợp)."""
-    futs = {_bg_pool.submit(_alt_get, n, f): n for n, f in alt_providers(url)}
+    ranked = sorted(alt_providers(url), key=lambda nf: prov_score(nf[0]))
+    stop = threading.Event()
+    # nguồn tốt nhất chạy ngay, các nguồn sau vào cuộc trễ dần (0, 0.5, 1.0s...) nên thường chỉ 1-2 nguồn thực sự bị gọi
+    futs = {_bg_pool.submit(_alt_get, n, f, min(i * 0.5, 2.0), stop): n for i, (n, f) in enumerate(ranked)}
     errs = []
     try:
         for fut in as_completed(futs, timeout=18):
@@ -1080,6 +1125,7 @@ def alt_fetch(url):
     except Exception:
         errs.append("quá thời gian chờ")
     finally:
+        stop.set()
         for f in futs:
             f.cancel()
     raise RuntimeError("các nguồn dự phòng đều lỗi (" + "; ".join(errs[:5]) + ")")
@@ -1436,9 +1482,34 @@ def web_payload(data):
 
 
 # ======================= routes web =======================
+_static_cache = {}
+
+
+def static_page(name):
+    """Trang tĩnh nạp một lần vào RAM, nén gzip sẵn, có ETag: phản hồi gần như tức thì; If-None-Match -> 304."""
+    path = os.path.join(app.root_path, name)
+    try:
+        mt = os.path.getmtime(path)
+    except OSError:
+        return send_from_directory(app.root_path, name)
+    ent = _static_cache.get(name)
+    if not ent or ent["mt"] != mt:
+        raw = open(path, "rb").read()
+        ent = {"mt": mt, "raw": raw, "gz": gzip.compress(raw, 6, mtime=0),
+               "etag": '"%s"' % hashlib.md5(raw).hexdigest()[:20]}
+        _static_cache[name] = ent
+    hdr = {"ETag": ent["etag"], "Cache-Control": "public, max-age=60, stale-while-revalidate=600", "Vary": "Accept-Encoding"}
+    if request.headers.get("If-None-Match") == ent["etag"]:
+        return Response(status=304, headers=hdr)
+    if "gzip" in request.headers.get("Accept-Encoding", "").lower():
+        hdr["Content-Encoding"] = "gzip"
+        return Response(ent["gz"], mimetype="text/html", headers=hdr)
+    return Response(ent["raw"], mimetype="text/html", headers=hdr)
+
+
 @app.get("/")
 def index():
-    return send_from_directory(app.root_path, "index.html")
+    return static_page("index.html")
 
 
 @app.get("/docs")
@@ -1446,7 +1517,7 @@ def index():
 @app.get("/api/v1")
 @app.get("/api/v1/")
 def docs():
-    return send_from_directory(app.root_path, "docs.html")
+    return static_page("docs.html")
 
 
 @app.get("/health")
@@ -1784,6 +1855,23 @@ class TeeBody:
         self._release()
         if hasattr(self._src, "close"):
             self._src.close()
+
+
+@app.after_request
+def compress_small(resp):
+    """Nén gzip JSON/văn bản >=700 byte khi trình duyệt cho phép (không đụng tới file tải về)."""
+    try:
+        if (not resp.direct_passthrough and "Content-Encoding" not in resp.headers and resp.status_code != 304
+                and "gzip" in request.headers.get("Accept-Encoding", "").lower()
+                and resp.mimetype in ("application/json", "text/plain", "text/html")):
+            data = resp.get_data()
+            if len(data) >= 700:
+                resp.set_data(gzip.compress(data, 5, mtime=0))
+                resp.headers["Content-Encoding"] = "gzip"
+                resp.headers.add("Vary", "Accept-Encoding")
+    except Exception as e:
+        app.logger.warning("compress lỗi: %s", e)
+    return resp
 
 
 @app.after_request
@@ -3928,12 +4016,49 @@ def run_batch(job):
     finally:
         job["exp"] = time.time() + BATCH_TTL
         job["ev"].set()
+        fire_webhook(job)
         discord_log("get", 0x57F287 if job["status"] == "done" else 0xED4245, endpoint="/api/batch", ip=job["ip"],
                     url=" ".join(it["url"] for it in job["items"])[:900], so_link=job["total"], tai_duoc=job["ok"],
                     dung_luong=human_size(job.get("size", 0)), kieu=job["kind"], ket_qua=job["status"])
 
 
-def batch_create(entries, kind, quality, name, allow_preview=False):
+def webhook_ok(url):
+    """Chỉ nhận https tới máy chủ công cộng (chặn SSRF: localhost, mạng nội bộ, metadata đám mây)."""
+    import ipaddress, socket
+    try:
+        u = urlparse(url)
+        if u.scheme != "https" or not u.hostname or len(url) > 500 or u.username:
+            return False
+        for fam, _, _, _, sa in socket.getaddrinfo(u.hostname, u.port or 443, proto=socket.IPPROTO_TCP):
+            ip = ipaddress.ip_address(sa[0])
+            if not ip.is_global:
+                return False
+        return True
+    except Exception:
+        return False
+
+
+def fire_webhook(job):
+    url = job.get("webhook")
+    if not url:
+        return
+    def go():
+        try:
+            if not webhook_ok(url):
+                return
+            zip_url = f"{job.get('base', '')}/api/batch/{job['id']}/zip" if job["status"] == "done" else ""
+            text = (f"Beysnap: ZIP đã xong {job['ok']}/{job['total']} link. Tải: {zip_url}" if job["status"] == "done"
+                    else f"Beysnap: không tạo được ZIP. {job['msg']}")
+            payload = {"content": text[:1900]} if "discord.com/api/webhooks" in url else {
+                "id": job["id"], "status": job["status"], "ok": job["ok"], "total": job["total"], "zip": zip_url,
+                "name": job["name"], "message": job["msg"], "text": text}
+            http.post(url, json=payload, timeout=10, allow_redirects=False)
+        except Exception as e:
+            app.logger.warning("Webhook lỗi: %s", e)
+    run_bg(go)
+
+
+def batch_create(entries, kind, quality, name, allow_preview=False, webhook=""):
     """Tạo job. entries = [{url, label, seed(tuỳ chọn)}]. -> (job, None) hoặc (None, (json, mã))."""
     kind = kind if kind in BATCH_KINDS else "auto"
     quality = quality if quality in ("hd", "sd", "wm") else "hd"
@@ -3956,6 +4081,7 @@ def batch_create(entries, kind, quality, name, allow_preview=False):
         job = {"id": jid, "status": "queued", "t": time.time(), "exp": time.time() + 3600, "total": len(entries), "done": 0,
                "ok": 0, "bytes": 0, "kind": kind, "quality": quality, "ip": ip, "msg": "", "ev": threading.Event(),
                "allow_preview": allow_preview, "path": os.path.join(BATCH_DIR, jid + ".zip"),
+               "webhook": webhook, "base": request.host_url.rstrip("/"),
                "name": f"{name}_{datetime.now(timezone(timedelta(hours=7))).strftime('%Y%m%d_%H%M')}.zip",
                "items": [{"url": e["url"], "label": e.get("label") or e["url"][:60], "status": "wait", "msg": "", "files": 0}
                          for e in entries]}
@@ -4000,7 +4126,10 @@ def batch_view(v1):
     kind = str(body.get("kind") or request.values.get("kind") or "auto").lower()
     quality = str(body.get("quality") or request.values.get("quality") or "hd").lower()
     ap = str(body.get("allow_preview") or request.values.get("allow_preview") or "") in ("1", "true")
-    job, err = batch_create(entries, kind, quality, f"beysnap_{len(entries)}_link", ap)
+    hook = str(body.get("webhook") or request.values.get("webhook") or "").strip()
+    if hook and not webhook_ok(hook):
+        return jsonify(error="Webhook phải là link https tới máy chủ công khai (không dùng localhost/mạng nội bộ)."), 400
+    job, err = batch_create(entries, kind, quality, f"beysnap_{len(entries)}_link", ap, hook)
     if err:
         if request.values.get("format") == "text":
             return Response("LỖI: " + err[0].get_json()["error"], status=err[1], mimetype="text/plain; charset=utf-8")
@@ -4229,7 +4358,8 @@ def api_v1_channel():
     if request.values.get("zip") in ("1", "true"):
         entries = [{"url": v["url"], "label": v["title"] or v["id"], "seed": v["seed"]} for v in res["videos"]]
         job, e2 = batch_create(entries, (request.values.get("kind") or "auto").lower(), (request.values.get("quality") or "hd").lower(),
-                               f"beysnap_{res['user']}_{len(entries)}")
+                               f"beysnap_{res['user']}_{len(entries)}", False,
+                               (request.values.get("webhook") or "").strip() if webhook_ok((request.values.get("webhook") or "").strip()) else "")
         if e2:
             return e2
         return batch_respond(job, True)
@@ -4258,8 +4388,473 @@ def api_channel_zip():
         return jsonify(error="Không thấy video đã chọn, hãy tải lại danh sách."), 400
     entries = [{"url": v["url"], "label": v["title"] or v["id"], "seed": v["seed"]} for v in pick]
     kind = str(body.get("kind") or "auto").lower()
-    job, err = batch_create(entries, kind, str(body.get("quality") or "hd").lower(), f"beysnap_{user}_{len(entries)}")
+    job, err = batch_create(entries, kind, str(body.get("quality") or "hd").lower(), f"beysnap_{user}_{len(entries)}", False,
+                            str(body.get("webhook") or "").strip() if webhook_ok(str(body.get("webhook") or "").strip()) else "")
     return err if err else jsonify(batch_public(job))
+
+
+# ======================= PWA (cài lên màn hình chính + nhận link từ nút Chia sẻ) =======================
+@app.get("/manifest.webmanifest")
+def pwa_manifest():
+    m = {"name": "Beysnap", "short_name": "Beysnap", "description": "Dán link, nhận video, ảnh và nhạc gốc.",
+         "start_url": "/?src=pwa", "scope": "/", "display": "standalone", "background_color": "#f5f5f7",
+         "theme_color": "#0a84ff", "lang": "vi",
+         "icons": [{"src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
+                   {"src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"},
+                   {"src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"}],
+         # Android/Chrome: Beysnap hiện trong nút Chia sẻ của TikTok, Instagram, YouTube...; link được truyền vào trang chủ
+         "share_target": {"action": "/", "method": "GET", "params": {"title": "title", "text": "text", "url": "url"}}}
+    return Response(json.dumps(m), mimetype="application/manifest+json", headers={"Cache-Control": "public, max-age=3600"})
+
+
+_icons = {}
+
+
+@app.get("/icon-<int:size>.png")
+def pwa_icon(size):
+    if size not in (180, 192, 512):
+        return jsonify(error="Không có"), 404
+    if size not in _icons:
+        from PIL import Image, ImageDraw
+        S = size * 2
+        im = Image.new("RGB", (S, S))
+        px = im.load()
+        for y in range(S):  # nền chuyển màu xanh -> tím giống logo
+            for x in range(0, S, 1):
+                t = (x + y) / (2 * S)
+                px[x, y] = (int(90 + 4 * t * 0 + (94 - 90) * t), int(200 - 108 * t), int(250 - 20 * t))
+        d = ImageDraw.Draw(im)
+        w = S // 13
+        c = S // 2
+        d.line([(c, S * .22), (c, S * .58)], fill="white", width=w)
+        d.line([(c - S * .14, S * .44), (c, S * .58), (c + S * .14, S * .44)], fill="white", width=w, joint="curve")
+        d.line([(S * .28, S * .65), (S * .28, S * .72), (S * .34, S * .78), (S * .66, S * .78), (S * .72, S * .72), (S * .72, S * .65)],
+               fill="white", width=w, joint="curve")
+        out = io.BytesIO()
+        im.resize((size, size), Image.LANCZOS).save(out, "PNG", optimize=True)
+        _icons[size] = out.getvalue()
+    return Response(_icons[size], mimetype="image/png", headers={"Cache-Control": "public, max-age=86400"})
+
+
+SW_JS = """// Beysnap service worker: giao diện mở tức thì, API luôn đi mạng
+const V = 'beysnap-v1';
+self.addEventListener('install', e => { self.skipWaiting(); e.waitUntil(caches.open(V).then(c => c.add('/').catch(() => 0))); });
+self.addEventListener('activate', e => e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== V).map(k => caches.delete(k)))).then(() => self.clients.claim())));
+self.addEventListener('fetch', e => {
+  const u = new URL(e.request.url);
+  if (e.request.method !== 'GET' || u.origin !== location.origin) return;
+  if (u.pathname === '/' && !u.search.includes('share')) {  // trang chủ: mạng trước, hỏng mạng thì dùng bản đã lưu
+    e.respondWith(fetch(e.request).then(r => { const c = r.clone(); caches.open(V).then(x => x.put('/', c)); return r; }).catch(() => caches.match('/')));
+  }
+});
+"""
+
+
+@app.get("/sw.js")
+def pwa_sw():
+    return Response(SW_JS, mimetype="application/javascript", headers={"Cache-Control": "no-cache", "Service-Worker-Allowed": "/"})
+
+
+# ======================= Công cụ: đổi định dạng, cắt clip, GIF/WebP, ảnh bìa đẹp nhất =======================
+TOOL_MAX_MB = float(os.environ.get("TOOL_MAX_MB", "60"))        # video nguồn tối đa để xử lý
+TOOL_MAX_SEC = float(os.environ.get("TOOL_MAX_SEC", "90"))      # độ dài tối đa của đoạn xử lý lại (mã hoá lại rất tốn CPU)
+_tool_sem = threading.Semaphore(int(os.environ.get("TOOL_CONCURRENCY", "2")))  # RAM/CPU của Render free rất ít
+TOOL_FMTS = ("mp4", "mp3", "gif", "webp")
+
+
+def fetch_to_file(url, dst):
+    up, _, errs = open_first([url])
+    if up is None:
+        raise RuntimeError("không tải được video nguồn: " + "; ".join(e for e in errs if e)[:120])
+    size, cap = 0, int(TOOL_MAX_MB * 1048576)
+    try:
+        with open(dst, "wb") as f:
+            for chunk in up.iter_content(262144):
+                size += len(chunk)
+                if size > cap:
+                    raise ValueError(f"video lớn hơn {TOOL_MAX_MB:g} MB, quá nặng để xử lý trên máy chủ miễn phí")
+                f.write(chunk)
+    finally:
+        up.close()
+    return size
+
+
+def _num(v, lo, hi, default):
+    try:
+        x = float(v)
+    except (TypeError, ValueError):
+        return default
+    return max(lo, min(hi, x)) if x == x else default
+
+
+def av_cut_copy(src, dst, start, end):
+    """Cắt không mã hoá lại (rất nhanh, không tốn CPU). Điểm bắt đầu lùi về khung khoá gần nhất nên có thể lệch vài giây."""
+    import av
+    with av.open(src) as inp, av.open(dst, "w", format="mp4") as out:
+        smap = {}
+        for st in inp.streams:
+            if st.type in ("video", "audio"):
+                smap[st.index] = out.add_stream_from_template(st)
+        vs = next((s for s in inp.streams if s.type == "video"), None)
+        if start > 0:
+            inp.seek(int(start * 1_000_000), any_frame=False, backward=True)
+        base = {}  # chỉ số luồng -> mốc thời gian (giây) bị trừ đi
+        t0 = None
+        for pkt in inp.demux(*[inp.streams[i] for i in smap]):
+            if pkt.dts is None or pkt.pts is None:
+                continue
+            st = inp.streams[pkt.stream_index]
+            tsec = float(pkt.pts * st.time_base)
+            if end and tsec > end:
+                if st.type == "video":
+                    break
+                continue
+            if t0 is None:
+                if st is not vs and vs is not None:
+                    continue  # chờ khung hình khoá đầu tiên của video để làm mốc 0
+                t0 = float(pkt.dts * st.time_base)
+            if tsec < t0 - 0.001 and st.type == "audio":
+                continue
+            off = int(t0 / st.time_base)
+            pkt.pts -= off
+            pkt.dts -= off
+            pkt.stream = smap[pkt.stream_index]
+            out.mux(pkt)
+
+
+def _frames(src, start, end, fps, width):
+    """Sinh (thời điểm, ảnh PIL) từ khoảng [start,end], lấy mẫu theo fps, thu nhỏ còn width."""
+    import av
+    with av.open(src) as inp:
+        vs = inp.streams.video[0]
+        vs.thread_type = "AUTO"
+        if start > 0:
+            inp.seek(int(start * 1_000_000), any_frame=False, backward=True)
+        nxt = start
+        for fr in inp.decode(vs):
+            if fr.pts is None:
+                continue
+            t = float(fr.pts * vs.time_base)
+            if t < start - 1e-3:
+                continue
+            if end and t > end:
+                break
+            if t + 1e-3 < nxt:
+                continue
+            nxt = t + 1.0 / fps
+            w = min(width, fr.width) if width else fr.width
+            h = int(fr.height * w / fr.width) // 2 * 2
+            yield t, fr.to_image().resize((w, h)) if (w, h) != (fr.width, fr.height) else fr.to_image()
+
+
+def av_duration(src):
+    import av
+    with av.open(src) as inp:
+        d = float(inp.duration / 1_000_000) if inp.duration else 0.0
+        if not d and inp.streams.video:
+            vs = inp.streams.video[0]
+            d = float(vs.duration * vs.time_base) if vs.duration else 0.0
+        return d
+
+
+def av_animation(src, dst, kind, start, end, fps, width):
+    frames = [im for _, im in _frames(src, start, end, fps, width)]
+    if not frames:
+        raise RuntimeError("không đọc được khung hình nào trong đoạn đã chọn")
+    dur = int(1000 / fps)
+    if kind == "gif":
+        pal = [f.convert("P", palette=1, colors=128, dither=0) for f in frames]  # palette=1: bảng màu thích nghi
+        pal[0].save(dst, "GIF", save_all=True, append_images=pal[1:], duration=dur, loop=0, optimize=False, disposal=2)
+    else:
+        frames[0].save(dst, "WEBP", save_all=True, append_images=frames[1:], duration=dur, loop=0, quality=70, method=4)
+
+
+def av_reencode(src, dst, start, end, height):
+    """Cắt chính xác và/hoặc đổi độ phân giải (H.264 + AAC). Chậm trên máy chủ miễn phí nên chỉ cho đoạn ngắn."""
+    import av
+    from fractions import Fraction
+    with av.open(src) as inp, av.open(dst, "w", format="mp4") as out:
+        vs = inp.streams.video[0]
+        a_in = inp.streams.audio[0] if inp.streams.audio else None
+        rate = vs.average_rate or Fraction(30)
+        w0, h0 = vs.codec_context.width, vs.codec_context.height
+        h = min(int(height), h0) if height else h0
+        h -= h % 2
+        w = int(w0 * h / h0) // 2 * 2
+        vo = out.add_stream("libx264", rate=rate)
+        vo.width, vo.height, vo.pix_fmt = w, h, "yuv420p"
+        vo.options = {"preset": "veryfast", "crf": "24"}
+        ao = None
+        if a_in is not None:
+            ao = out.add_stream("aac", rate=a_in.codec_context.sample_rate or 44100)
+            ao.layout = "stereo"
+            res = av.AudioResampler(format="fltp", layout="stereo", rate=ao.rate)
+        if start > 0:
+            inp.seek(int(start * 1_000_000), any_frame=False, backward=True)
+        streams = [vs] + ([a_in] if a_in is not None else [])
+        n_v = 0
+        for pkt in inp.demux(*streams):
+            for fr in pkt.decode():
+                if fr.pts is None:
+                    continue
+                st = inp.streams[pkt.stream_index]
+                t = float(fr.pts * st.time_base)
+                if t < start - 1e-3:
+                    continue
+                if end and t > end:
+                    if st.type == "video":
+                        pkt = None
+                        break
+                    continue
+                if st.type == "video":
+                    nf = fr.reformat(width=w, height=h, format="yuv420p")
+                    nf.pts = int((t - start) * 1000)
+                    nf.time_base = Fraction(1, 1000)
+                    for p in vo.encode(nf):
+                        out.mux(p)
+                    n_v += 1
+                elif ao is not None:
+                    fr.pts = None
+                    for rf in res.resample(fr):
+                        for p in ao.encode(rf):
+                            out.mux(p)
+            if pkt is None:
+                break
+        for p in vo.encode(None):
+            out.mux(p)
+        if ao is not None:
+            for p in ao.encode(None):
+                out.mux(p)
+        if not n_v:
+            raise RuntimeError("đoạn đã chọn không có hình")
+
+
+def av_mp3(src, dst, start, end):
+    import av
+    with av.open(src) as inp, av.open(dst, "w", format="mp3") as out:
+        if not inp.streams.audio:
+            raise RuntimeError("video này không có âm thanh")
+        a_in = inp.streams.audio[0]
+        ao = out.add_stream("libmp3lame", rate=44100)
+        ao.layout = "stereo"
+        ao.bit_rate = 192000
+        res = av.AudioResampler(format="s16p", layout="stereo", rate=44100)
+        if start > 0:
+            inp.seek(int(start * 1_000_000), any_frame=False, backward=True)
+        for fr in inp.decode(a_in):
+            t = float(fr.pts * a_in.time_base) if fr.pts is not None else start
+            if t < start - 1e-3:
+                continue
+            if end and t > end:
+                break
+            fr.pts = None
+            for rf in res.resample(fr):
+                for p in ao.encode(rf):
+                    out.mux(p)
+        for p in ao.encode(None):
+            out.mux(p)
+
+
+def best_frame(src, start, end, samples=14):
+    """Chọn khung hình đẹp nhất: nét (nhiều cạnh), không quá tối/cháy sáng; trả ảnh JPEG gốc."""
+    from PIL import ImageFilter, ImageStat
+    dur = (end or av_duration(src) or 10) - start
+    n = max(1, int(samples))
+    best, bs = None, -1.0
+    for k in range(n):
+        t0 = start + dur * (k + 0.5) / n
+        got = None
+        for _, im in _frames(src, t0, t0 + 1.0, 1.0, 0):
+            got = im
+            break
+        if got is None:
+            continue
+        g = got.convert("L").resize((200, max(1, int(200 * got.height / got.width))))
+        sharp = ImageStat.Stat(g.filter(ImageFilter.FIND_EDGES)).var[0]
+        mean = ImageStat.Stat(g).mean[0]
+        expo = 1.0 if 45 <= mean <= 215 else 0.4
+        score = sharp * expo
+        if score > bs:
+            best, bs = got, score
+    if best is None:
+        raise RuntimeError("không lấy được khung hình nào")
+    return best
+
+
+def file_then_cleanup(path, tmpdir, ctype, name):
+    """Gửi file rồi xoá thư mục tạm khi xong HOẶC khi người dùng ngắt kết nối (finally của generator luôn chạy)."""
+    size = os.path.getsize(path)
+
+    def gen():
+        try:
+            with open(path, "rb") as f:
+                while True:
+                    b = f.read(262144)
+                    if not b:
+                        break
+                    yield b
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+    return Response(gen(), mimetype=ctype, headers={"Content-Disposition": content_disposition(name),
+                                                    "Content-Length": str(size), "Cache-Control": "no-store"})
+
+
+@app.get("/api/convert")
+def api_convert():
+    """Xử lý video của một link tải: ?t=<token>&fmt=mp4|mp3|gif|webp|jpg&start=&end=&h=&fps=&w=&precise=1"""
+    entry = _tokens.get(request.args.get("t", ""))
+    if not entry or entry["exp"] < time.time():
+        return jsonify(error="Link đã hết hạn, hãy bấm Tải để phân tích lại link."), 410
+    if not entry.get("url") or entry.get("mode", "direct") != "direct":
+        return jsonify(error="Bản video này không hỗ trợ công cụ chỉnh sửa. Hãy chọn bản HD/SD thường."), 400
+    if not rate_ok("tool", 12, 300):
+        return jsonify(error="Bạn dùng công cụ hơi nhiều, hãy đợi vài phút."), 429
+    fmt = (request.args.get("fmt") or "mp4").lower()
+    if fmt not in TOOL_FMTS + ("jpg",):
+        return jsonify(error="Định dạng không hợp lệ."), 400
+    start = _num(request.args.get("start"), 0, 36000, 0.0)
+    end = _num(request.args.get("end"), 0, 36000, 0.0)
+    if end and end <= start:
+        return jsonify(error="Giây kết thúc phải lớn hơn giây bắt đầu."), 400
+    height = int(_num(request.args.get("h"), 0, 1080, 0))
+    precise = request.args.get("precise") in ("1", "true")
+    base = re.sub(r"\.\w+$", "", entry["filename"])
+    if not _tool_sem.acquire(timeout=20):
+        return jsonify(error="Máy chủ đang bận xử lý video khác, thử lại sau ít giây."), 429
+    tmp = tempfile.mkdtemp(prefix="bs_tool_")
+    try:
+        src = os.path.join(tmp, "src.mp4")
+        fetch_to_file(entry["url"], src)
+        total = av_duration(src)
+        if total and start >= total:
+            return jsonify(error=f"Video chỉ dài {total:.0f} giây, giây bắt đầu phải nhỏ hơn."), 400
+        eff_end = min(end, total) if (end and total) else (end or total)
+        span = (eff_end - start) if eff_end else TOOL_MAX_SEC
+        if fmt == "jpg":
+            im = best_frame(src, start, eff_end)
+            dst, name, ctype = os.path.join(tmp, "o.jpg"), f"{base}_bia.jpg", "image/jpeg"
+            im.convert("RGB").save(dst, "JPEG", quality=92)
+        elif fmt in ("gif", "webp"):
+            if not eff_end:
+                eff_end = min(start + 8, total or start + 8)
+            span = eff_end - start
+            if span > 15:
+                return jsonify(error="GIF/WebP tối đa 15 giây mỗi lần. Hãy chọn đoạn ngắn hơn (khuyên dùng 3 đến 8 giây)."), 400
+            fps = int(_num(request.args.get("fps"), 5, 15, 12))
+            width = int(_num(request.args.get("w"), 160, 640, 400))
+            dst, name, ctype = os.path.join(tmp, "o." + fmt), f"{base}.{fmt}", "image/" + ("gif" if fmt == "gif" else "webp")
+            av_animation(src, dst, fmt, start, eff_end, fps, width)
+        elif fmt == "mp3":
+            dst, name, ctype = os.path.join(tmp, "o.mp3"), f"{base}.mp3", "audio/mpeg"
+            av_mp3(src, dst, start, eff_end)
+        else:
+            dst, name, ctype = os.path.join(tmp, "o.mp4"), f"{base}_cat.mp4" if (start or end) else f"{base}_{height or 'goc'}p.mp4", "video/mp4"
+            if precise or height:
+                if span > TOOL_MAX_SEC:
+                    return jsonify(error=f"Cắt chính xác hoặc đổi độ phân giải chỉ cho đoạn tối đa {TOOL_MAX_SEC:g} giây "
+                                         "(máy chủ miễn phí mã hoá lại rất chậm). Hãy chọn đoạn ngắn hơn hoặc bỏ tuỳ chọn này."), 400
+                av_reencode(src, dst, start, eff_end, height)
+            else:
+                av_cut_copy(src, dst, start, eff_end)
+        if os.path.getsize(dst) < 200:
+            raise RuntimeError("kết quả rỗng")
+        resp = file_then_cleanup(dst, tmp, ctype, name)
+        tmp = None
+        return resp
+    except ValueError as e:
+        return jsonify(error=str(e)), 413
+    except Exception as e:
+        app.logger.warning("Công cụ lỗi (%s): %s", fmt, e)
+        report_error("/api/convert", e, fmt=fmt, start=start, end=end, host=urlparse(entry["url"]).hostname)
+        return jsonify(error=f"Không xử lý được: {e}"), ST_UPSTREAM
+    finally:
+        _tool_sem.release()
+        if tmp:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+
+# ======================= QR + link chia sẻ có thời hạn =======================
+@app.get("/api/qr")
+def api_qr():
+    data = request.args.get("data", "")
+    if not data or len(data) > 700 or not data.startswith(("http://", "https://")):
+        return jsonify(error="Thiếu hoặc sai link."), 400
+    try:
+        import segno
+    except ImportError:
+        return jsonify(error="Máy chủ chưa cài thư viện QR (segno)."), 501
+    buf = io.BytesIO()
+    segno.make(data, error="m").save(buf, kind="svg", scale=8, border=2, dark="#000", light="#fff")
+    return Response(buf.getvalue(), mimetype="image/svg+xml", headers={"Cache-Control": "public, max-age=3600"})
+
+
+SHARE_MAX = int(os.environ.get("SHARE_MAX", "300"))
+
+
+@app.post("/api/share")
+def api_share():
+    body = request.get_json(silent=True) or {}
+    entry = _tokens.get(str(body.get("t") or ""))
+    if not entry or entry["exp"] < time.time():
+        return jsonify(error="Link đã hết hạn, hãy bấm Tải để phân tích lại link."), 410
+    if not rate_ok("share", 20, 600):
+        return jsonify(error="Bạn tạo link chia sẻ hơi nhiều, thử lại sau vài phút."), 429
+    hours = _num(body.get("hours"), 1, 24, 1)
+    now = time.time()
+    for k in [k for k, v in _tokens.items() if k.startswith("sh-") and v["exp"] < now]:
+        _tokens.pop(k, None)
+    if sum(1 for k in _tokens if k.startswith("sh-")) >= SHARE_MAX:
+        return jsonify(error="Máy chủ đang giữ quá nhiều link chia sẻ, thử lại sau."), 503
+    sid = secrets.token_urlsafe(9)
+    _tokens["sh-" + sid] = {**entry, "exp": now + hours * 3600, "shared": True}
+    return jsonify(url=f"{request.host_url.rstrip('/')}/s/{sid}", expires_in=int(hours * 3600), filename=entry["filename"])
+
+
+@app.get("/s/<sid>")
+def share_page(sid):
+    e = _tokens.get("sh-" + sid)
+    if not e or e["exp"] < time.time():
+        return Response("<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'>"
+                        "<body style='font:16px system-ui;padding:32px;text-align:center'><h2>Link đã hết hạn</h2>"
+                        "<p>Hãy nhờ người gửi tạo link mới.</p>", 410, mimetype="text/html")
+    left = int(e["exp"] - time.time())
+    name = html.escape(e["filename"])
+    page = (f"<!doctype html><html lang=vi><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'>"
+            f"<meta name=robots content=noindex><title>Tải {name}</title>"
+            "<body style='font:16px system-ui;background:#f5f5f7;margin:0;display:grid;place-items:center;min-height:100vh'>"
+            "<div style='background:#fff;border-radius:20px;padding:28px;max-width:380px;margin:16px;text-align:center;box-shadow:0 6px 30px #0001'>"
+            f"<h2 style='margin:0 0 6px'>📥 {name}</h2><p style='color:#6e6e73;margin:0 0 18px'>Link còn hiệu lực khoảng {max(1, left // 60)} phút.</p>"
+            f"<a href='/api/download?t=sh-{html.escape(sid)}' style='display:block;background:#0a84ff;color:#fff;text-decoration:none;"
+            "padding:14px;border-radius:14px;font-weight:600'>⬇ Tải về</a>"
+            "<p style='color:#6e6e73;font-size:13px;margin:16px 0 0'>Gửi bởi Beysnap. Chỉ tải nội dung bạn có quyền sử dụng.</p></div>")
+    return Response(page, mimetype="text/html", headers={"Cache-Control": "no-store", "X-Robots-Tag": "noindex"})
+
+
+def _keepalive_loop():
+    """Khởi động nóng (nạp trang tĩnh, DNS/TLS tới nguồn chính) và tự gọi /health mỗi 10 phút để Render free không ngủ
+    (cần RENDER_EXTERNAL_URL, Render tự đặt; tắt bằng KEEPALIVE=0)."""
+    for n in ("index.html", "docs.html"):
+        try:
+            with app.test_request_context(headers={"Accept-Encoding": "gzip"}):
+                static_page(n)
+        except Exception:
+            pass
+    for host in ("www.tikwm.com", "api.groq.com", "www.tiktok.com"):
+        try:
+            http.head("https://" + host, timeout=5)
+        except Exception:
+            pass
+    base = os.environ.get("RENDER_EXTERNAL_URL", "").rstrip("/")
+    while base and os.environ.get("KEEPALIVE", "1").lower() not in ("0", "false", "off", "no"):
+        time.sleep(600)
+        try:
+            http.get(base + "/health", timeout=10)
+        except Exception:
+            pass
+
+
+if os.environ.get("RENDER") or os.environ.get("KEEPALIVE_FORCE"):
+    threading.Thread(target=_keepalive_loop, daemon=True, name="keepalive").start()
 
 
 if __name__ == "__main__":

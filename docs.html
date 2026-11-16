@@ -7,7 +7,7 @@
 <meta name="theme-color" content="#f5f5f7">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'"><noscript><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"></noscript>
 <style>
   :root {
     --bg1:#f5f5f7; --bg2:#f5f5f7; --card:#ffffff; --ink:#1d1d1f; --muted:#6e6e73; --line:#e5e5ea; --fill:#f2f2f7;
@@ -246,6 +246,21 @@
       </div>
     </section>
 
+    <section id="web74">
+      <h2>Tính năng web (v7.4)</h2>
+      <div class="card">
+        <ul style="margin:0;padding-left:22px">
+          <li><b>Key trong Phím tắt</b>: gửi bằng header <code class="i">X-API-Key</code>, hoặc trường <code class="i">key</code> (URL, Form <u>hoặc JSON</u>), hoặc <code class="i">Authorization: Bearer …</code>. Khoảng trắng, xuống dòng, dấu nháy thừa quanh key được tự bỏ. Lỗi 401 nói rõ: không thấy key, hay có thấy nhưng không khớp (kèm vài ký tự đầu).</li>
+          <li><b>Kênh/playlist nhiều trang</b>: dán link kênh YouTube (<code class="i">/@tên</code>, <code class="i">/channel/…</code>, <code class="i">/playlist?list=…</code>), hồ sơ Instagram, Bilibili, Twitch <code class="i">/videos</code>, SoundCloud, Vimeo, Dailymotion: trang tự chuyển sang danh sách để chọn nhiều video rồi tải một ZIP. API: <code class="i">POST /api/playlist {"url":…, "count":10}</code>. Một số nguồn (Instagram, YouTube từ IP máy chủ) có thể đòi đăng nhập hoặc chặn.</li>
+          <li><b>Phụ đề có sẵn</b>: <code class="i">GET /api/subs?url=…</code> liệt kê, thêm <code class="i">&amp;lang=vi&amp;fmt=srt|vtt|txt</code> để tải. API cho Phím tắt: <code class="i">GET /api/v1/subtitles?url=…&amp;lang=&amp;translate=vi&amp;source=auto|native|ai&amp;format=srt|vtt|txt|json</code>: dùng phụ đề sẵn nếu có, không thì AI nghe lời thoại; <code class="i">translate</code> dịch bằng AI.</li>
+          <li><b>Xem thử</b> trước khi tải (hỗ trợ Range nên chạy trên iPhone/Safari): nút “Xem thử” hoặc bấm ảnh bìa.</li>
+          <li><b>AI</b>: thêm .vtt và .srt song ngữ (gốc + bản dịch mỗi khung hai dòng).</li>
+          <li><b>/status</b>: trang trạng thái (nguồn nào sống/bị chặn, tải trọng, lỗi 1 giờ qua) và nút “Kiểm tra ngay” đo độ trễ tới TikTok, YouTube, Instagram, X, Facebook. JSON: <code class="i">/api/status</code>, <code class="i">?probe=1</code>. Không lộ khoá hay nội dung lỗi.</li>
+          <li><b>Nhanh và bền</b>: trình duyệt tự thử lại 2 lần khi nguồn bận (HTTP 424/5xx), và nhớ kết quả phân tích 10 phút: dán lại cùng link là có ngay (bấm Tải lần nữa khi đang xem để làm mới).</li>
+        </ul>
+      </div>
+    </section>
+
     <section id="errors">
       <h2>Mã lỗi</h2>
       <div class="card tablewrap"><table>
@@ -290,6 +305,8 @@
         <tr><td>TIKTOK_APIS</td><td>(tuỳ chọn) thêm nguồn dự phòng riêng khi tikwm bị chặn: mỗi dòng một địa chỉ GET có <code class="i">{url}</code>, trả JSON hoặc HTML chứa link mp4/mp3/ảnh. Có sẵn các nguồn tiklydown, lovetik, tikdownloader, ttsave chạy song song.</td></tr>
         <tr><td>BATCH_MAX_ITEMS / BATCH_MAX_MB</td><td>Tải hàng loạt: số link tối đa mỗi ZIP (mặc định 30) · dung lượng ZIP tối đa tính bằng MB (mặc định 150). ZIP ghi ra đĩa tạm và giữ 30 phút.</td></tr>
         <tr><td>TOOL_MAX_MB / TOOL_MAX_SEC / TOOL_CONCURRENCY / SHARE_MAX</td><td>Công cụ video: dung lượng nguồn tối đa MB (60) · giây tối đa khi mã hoá lại (90) · số tác vụ chạy cùng lúc (2) · số link chia sẻ tối đa giữ cùng lúc (300). KEEPALIVE=0 tắt việc tự gọi /health giữ máy chủ thức.</td></tr>
+        <tr><td>TW_BUDGET / ALT_HEDGE / OPEN_HEDGE</td><td>Tốc độ: tổng giây tối đa chờ nguồn (40) · sau bao nhiêu giây tikwm chưa trả lời thì gọi song song nguồn dự phòng (3) · sau bao nhiêu giây link tải đầu chưa mở được thì thử luôn link kế (2.5). Kết quả về muộn vẫn được nhớ cho lần thử lại.</td></tr>
+        <tr><td>V1_REDIRECT</td><td>1 = <code>/api/v1/video</code>, <code>/music</code> chuyển hướng thẳng tới CDN tikwm thay vì tải qua Render (nhanh nhất; đặt <code>mode=proxy</code> để tắt từng lần).</td></tr>
         <tr><td>SOLVE_LIMIT</td><td>Số bài giải mỗi IP trong 10 phút (mặc định 30).</td></tr>
       </table></div>
       <div class="card gold">📎 <b>Log file</b>: video/ảnh người dùng tải qua máy chủ cũng được gửi lên kênh Discord của bạn (tải dở thì không gửi; cùng một file trong 10 phút chỉ gửi một lần). Ảnh chụp màn hình gửi tới <code class="i">/api/v1/solve</code> <b>không</b> bị gửi đi. Hãy nói rõ điều này nếu có người ngoài dùng chung máy chủ của bạn.</div>

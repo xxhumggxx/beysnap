@@ -381,3 +381,16 @@ Cần `TIKWM_RELAY` đã cập nhật: dán lại `cloudflare-api-worker.js` m�
 ## Cập nhật v7.3
 - Webhook khi ZIP xong: thêm tham số `webhook=https://...` (hoặc webhook Discord) vào `/api/v1/batch` để máy chủ báo khi xong, Phím tắt không cần chờ.
 - Chia sẻ có thời hạn: `POST /api/share` rồi gửi link `/s/<id>` cho người khác.
+
+## Cập nhật v7.4 — key trong Phím tắt
+Trong "Get contents of URL" kiểu JSON, thêm trường `key` (Text) với API_KEY, hoặc thêm Header `X-API-Key`. Cả hai đều được nhận. Nếu vẫn báo sai key, đọc câu thông báo: nó nói rõ key nhận được dài bao nhiêu ký tự và bắt đầu bằng gì, đối chiếu với API_KEY trên Render (đổi key xong phải Save và đợi deploy lại).
+Phụ đề: `GET /api/v1/subtitles?url=…&translate=vi&format=srt&key=…`.
+
+## Cập nhật v7.5 — Phím tắt chậm/timeout và lỗi "WFPhotoMediaContentItem produced no file representation for type public.mpeg-4"
+**Lỗi này nghĩa là gì**: hành động "Lưu vào Album ảnh" nhận được thứ KHÔNG phải file video (thường là câu báo lỗi JSON/chữ, hoặc phản hồi rỗng do quá thời gian). Nó không phải lỗi định dạng mp4. Gốc rễ thường là máy chủ quá chậm hoặc đang ngủ.
+
+**Cách khắc phục (làm theo thứ tự)**
+1. **Giữ máy chủ Render luôn thức** (nguyên nhân số 1: Render free ngủ sau 15 phút không có ai gọi, đánh thức mất 30–60 giây nên Phím tắt timeout). App không tự đánh thức được. Dùng dịch vụ miễn phí gọi đều đặn: vào uptimerobot.com (hoặc cron-job.org) → tạo monitor HTTP(s) → URL `https://TÊN-MIỀN-CỦA-BẠN/ping` → chu kỳ 5 phút. `/ping` cực nhẹ, không ghi log.
+2. **Tải thẳng từ CDN, bỏ qua Render**: thêm `&mode=redirect` vào URL `/api/v1/video` (hoặc đặt biến `V1_REDIRECT=1` trên Render để mặc định). iPhone tải trực tiếp từ máy chủ video nên nhanh hơn nhiều và không bị đứt giữa chừng.
+3. **Đọc lỗi thật**: tạm thêm hành động "Hiển thị kết quả" (Show) cho "Nội dung của URL" TRƯỚC khi lưu. Nếu hiện chữ `Không lấy được…` thì đó là lỗi từ máy chủ (xem /status để biết nguồn nào đang chặn). Hoặc thêm hành động "Nếu" kiểm tra Kích thước tệp nhỏ hơn 100 KB thì hiện nội dung rồi dừng, ngược lại mới Lưu.
+4. Máy chủ mới tự chạy đua nhiều nguồn song song và có hạn chờ 40 giây (biến `TW_BUDGET`): nếu nguồn chính chậm, các nguồn dự phòng vào cuộc sau 3 giây. Thử lại lần hai thường có ngay vì kết quả đến muộn vẫn được nhớ.

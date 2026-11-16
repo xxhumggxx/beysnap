@@ -193,3 +193,13 @@ Khi tikwm lỗi/chặn IP, server chạy **song song** thêm các dịch vụ t�
 ## v7.3 — Tính năng mới
 PWA + nhận link từ nút Chia sẻ, gợi ý link vừa copy, công cụ video (MP3/GIF/WebP/ảnh bìa/cắt clip/hạ độ phân giải), chia sẻ link có thời hạn + QR, theo dõi kênh (lưu trong trình duyệt), webhook khi ZIP xong, nguồn dự phòng tự xếp hạng theo độ nhanh. Xem mục "Tính năng web (v7.3)" trong /docs. Thêm thư viện `segno` (QR). Biến mới: `TOOL_MAX_MB`, `TOOL_MAX_SEC`, `TOOL_CONCURRENCY`, `SHARE_MAX`.
 Lưu ý Render free: mã hoá lại video rất chậm (CPU yếu) nên chỉ cho đoạn ≤90 giây; cắt nhanh/MP3/GIF nhẹ hơn nhiều.
+
+## v7.4
+- **Sửa lỗi "báo sai key" của Phím tắt**: key gửi trong thân JSON (`{"key": "..."}`) trước đây không được đọc. Nay nhận key ở header `X-API-Key`, `Authorization: Bearer`, hoặc trường `key` (URL/Form/JSON), tự bỏ khoảng trắng/xuống dòng thừa; lỗi 401 nói rõ không thấy key hay key không khớp. Mọi trường JSON (`format`, `url`...) giờ cũng được đọc như tham số.
+- Danh sách kênh/playlist YouTube, Instagram, Bilibili, Twitch, SoundCloud, Vimeo, Dailymotion (chọn nhiều video, một ZIP); phụ đề có sẵn (.srt/.vtt/.txt) + `/api/v1/subtitles` (phụ đề sẵn hoặc AI, có dịch); xem thử video; .vtt và .srt song ngữ; trang `/status`; tự thử lại phía trình duyệt; nhớ kết quả phân tích 10 phút.
+- Tệp mới: `status.html` (nhớ đưa lên cùng `app.py`).
+
+## v7.5 — Tốc độ & độ trễ
+- Tikwm và các nguồn dự phòng chạy ĐUA (dự phòng vào cuộc sau `ALT_HEDGE`=3s hoặc ngay khi tikwm lỗi/bị chặn), có hạn chờ `TW_BUDGET`=40s; kết quả về muộn vẫn được cache cho lần thử lại. yt-dlp cũng có hạn chờ.
+- `open_first` thử link kế khi link đầu chậm (`OPEN_HEDGE`=2.5s); `V1_REDIRECT=1` cho `/api/v1/video` chuyển hướng thẳng CDN; `/ping` siêu nhẹ cho dịch vụ giữ thức; web tải trước thông tin khi vừa dán link; font không chặn hiển thị.
+- **Render free ngủ sau 15 phút**: dùng UptimeRobot/cron-job.org gọi `/ping` mỗi 5 phút (xem PROMPT_PHIM_TAT_IPHONE.md).

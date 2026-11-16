@@ -36,15 +36,15 @@ import time
 import traceback
 import unicodedata
 import zipfile
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, wait as fwait, FIRST_COMPLETED, TimeoutError as FuturesTimeout, as_completed
 from http.cookiejar import DefaultCookiePolicy
 from datetime import datetime, timedelta, timezone
-from urllib.parse import quote, unquote, urlparse
+from urllib.parse import parse_qs, quote, unquote, urlparse
 
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
-from flask import (Flask, Response, g, jsonify, redirect, request, send_file,
+from flask import (Flask, Request, Response, g, jsonify, redirect, request, send_file,
                    send_from_directory, stream_with_context)
 from werkzeug.middleware.proxy_fix import ProxyFix
 
@@ -66,7 +66,30 @@ TIKWM_RELAY = os.environ.get("TIKWM_RELAY", "")  # (tuỳ chọn) địa chỉ C
 RELAY_KEY = os.environ.get("RELAY_KEY", "")
 OUTBOUND_PROXY = os.environ.get("OUTBOUND_PROXY", "")  # (tuỳ chọn) http(s)://user:pass@host:port - IP dân cư để qua chặn
 
+from werkzeug.utils import cached_property as _cached_property
+
+
+class BeyRequest(Request):
+    """request.values chỉ có query + form. Phím tắt iPhone hay gửi JSON ({"key":..., "format":"text", ...}) nên gộp cả các
+    trường JSON dạng chữ/số/bool vào, để key/format/url... ở đâu cũng được nhận."""
+
+    @_cached_property
+    def values(self):
+        base = super().values
+        try:
+            j = self.get_json(silent=True) if self.is_json else None
+        except Exception:
+            j = None
+        if isinstance(j, dict):
+            from werkzeug.datastructures import CombinedMultiDict, MultiDict
+            extra = MultiDict((k, (x if isinstance(x, str) else ("true" if x is True else "false" if x is False else str(x))))
+                              for k, x in j.items() if isinstance(x, (str, int, float, bool)) and not isinstance(x, type(None)))
+            return CombinedMultiDict([base, extra])
+        return base
+
+
 app = Flask(__name__)
+app.request_class = BeyRequest
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 app.json.ensure_ascii = False
 app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024
@@ -387,6 +410,11 @@ TW_STAGGER = 1.1          # tikwm giới hạn ~1 yêu cầu/giây/IP: các đư
 TW_BLOCK_SECONDS = 45     # vừa bị chặn IP ở mọi đường trực tiếp thì thôi thử lại trong chừng này giây (báo lỗi tức thì)
 _tw_block = {"until": 0.0}
 _bg_pool = ThreadPoolExecutor(8)
+_race_pool = ThreadPoolExecutor(32)   # các nguồn chạy đua + yt-dlp có hạn chờ (tách riêng để không nghẽn _bg_pool)
+V1_REDIRECT = os.environ.get("V1_REDIRECT", "0").lower() in ("1", "true", "yes", "on")
+TW_BUDGET = float(os.environ.get("TW_BUDGET", "40"))      # tổng giây tối đa chờ nguồn trước khi báo lỗi (Phím tắt hay timeout ~60s)
+ALT_HEDGE = float(os.environ.get("ALT_HEDGE", "3.0"))     # tikwm chưa trả lời sau từng này giây thì gọi song song các nguồn dự phòng
+OPEN_HEDGE = float(os.environ.get("OPEN_HEDGE", "2.5"))   # link tải đầu chưa mở được sau từng này giây thì thử luôn link kế
 
 
 def _tikwm_call(name, ep, params, headers, use_cffi, timeout=12):
@@ -410,9 +438,21 @@ def _tikwm_call(name, ep, params, headers, use_cffi, timeout=12):
     return None, str(jj.get("msg") or "tikwm không trả dữ liệu"), False, True
 
 
+_tw_stat = {"ok": 0, "fail": 0, "last_ok": 0.0, "last_fail": 0.0, "last_err": ""}
+
+
 def fetch_tikwm(url):
     """Trả về dict đã chuẩn hoá: videos / audio / images."""
-    return _hedged(tikwm_attempts(url), lambda jj: normalize_tikwm(jj["data"]))
+    try:
+        r = _hedged(tikwm_attempts(url), lambda jj: normalize_tikwm(jj["data"]))
+        _tw_stat["ok"] += 1
+        _tw_stat["last_ok"] = time.time()
+        return r
+    except Exception as e:
+        _tw_stat["fail"] += 1
+        _tw_stat["last_fail"] = time.time()
+        _tw_stat["last_err"] = str(e)[:80]
+        raise
 
 
 def _hedged(attempts, post):
@@ -1138,6 +1178,7 @@ def _get_tikwm(url):
     data = cache_get(key)
     if data is not None:
         return data
+    data = None
     short = (urlparse(url).hostname or "").lower().startswith(("vm.", "vt."))
     resolving = _bg_pool.submit(resolve_short, url) if short else None  # chạy song song với tikwm nên thường đã xong
 
@@ -1161,23 +1202,65 @@ def _get_tikwm(url):
             if v not in seen:
                 seen.append(v)
                 yield v
+    t_start = time.time()
+    left = lambda: TW_BUDGET - (time.time() - t_start)
     errs = []
-    for c in cands():
+    tw_done, stop, tw_ok = threading.Event(), threading.Event(), threading.Event()
+
+    def late_cache(f):  # kết quả về muộn (sau hạn chờ) vẫn được nhớ để lần thử lại của Phím tắt có ngay
         try:
-            data = fetch_tikwm(c)
-            break
-        except Exception as e:
-            errs.append(str(e))
-            app.logger.warning("tikwm lỗi (%s): %s", c, e)
-            if "chặn IP" in str(e):  # chặn IP thì thử link khác cũng vô ích
+            d = f.result()
+            if d and cache_get(key) is None:
+                cache_set(key, d)
+        except Exception:
+            pass
+
+    def stage_tikwm():
+        e_loc = []
+        try:
+            for c in cands():
+                try:
+                    r = fetch_tikwm(c)
+                    tw_ok.set()
+                    return r
+                except Exception as e:
+                    e_loc.append(str(e))
+                    app.logger.warning("tikwm lỗi (%s): %s", c, e)
+                    if "chặn IP" in str(e):  # chặn IP thì thử link khác cũng vô ích
+                        break
+            raise RuntimeError(e_loc[0] if e_loc else "tikwm không trả kết quả")
+        finally:
+            tw_done.set()
+
+    def stage_alt():
+        t0 = time.time()   # đợi tikwm tới ALT_HEDGE giây, hoặc vào cuộc ngay khi tikwm đã hỏng/bị chặn
+        while not tw_done.is_set() and not stop.is_set() and time.time() - t0 < ALT_HEDGE:
+            time.sleep(0.05)
+        if stop.is_set() or tw_ok.is_set():
+            raise RuntimeError("đã có nguồn khác trả kết quả")
+        d = alt_fetch(real_url(True))
+        app.logger.warning("Dùng nguồn dự phòng %s", d.get("via"))
+        return d
+
+    futs = {_race_pool.submit(stage_tikwm): "tikwm", _race_pool.submit(stage_alt): "dự phòng"}
+    pending, err_by = set(futs), {}
+    try:
+        while pending and data is None:
+            done, pending = fwait(pending, timeout=max(0.2, left()), return_when=FIRST_COMPLETED)
+            if not done:
+                err_by["thời gian"] = f"quá {TW_BUDGET:g} giây không nguồn nào trả lời"
                 break
-    if data is None:  # tikwm hỏng/chặn IP: thử song song các dịch vụ tải TikTok khác trước khi tới trang TikTok/yt-dlp
-        try:
-            data = alt_fetch(real_url(True))
-            app.logger.warning("Dùng nguồn dự phòng %s", data.get("via"))
-        except Exception as e:
-            errs.append(str(e))
-            app.logger.warning("Nguồn dự phòng lỗi: %s", e)
+            for f in done:
+                try:
+                    data = f.result()
+                    break
+                except Exception as e:
+                    err_by[futs[f]] = str(e)
+    finally:
+        stop.set()
+        for f in pending:
+            f.add_done_callback(late_cache)
+    errs = [err_by[k] for k in ("tikwm", "dự phòng", "thời gian") if k in err_by] if data is None else []
     photo_page = None
     if data is None or not data["images"]:
         # có video rồi thì không đợi giải mã link rút gọn (đỡ chậm); chỉ chờ khi tikwm chẳng trả gì
@@ -1211,7 +1294,14 @@ def _get_tikwm(url):
             app.logger.warning("gallery-dl lỗi: %s", e)
     if data is None:
         try:
-            data = ytdlp_as_data(url)
+            if left() < 1.0:
+                raise RuntimeError("hết thời gian chờ")
+            fut = _race_pool.submit(ytdlp_as_data, url)
+            try:
+                data = fut.result(timeout=left())
+            except FuturesTimeout:
+                fut.add_done_callback(late_cache)   # yt-dlp chạy tiếp ở nền, lần thử lại sẽ có sẵn
+                raise RuntimeError("yt-dlp chưa xong trong hạn chờ")
         except Exception as e:
             errs.append(f"yt-dlp: {e}")
             app.logger.warning("yt-dlp cũng lỗi: %s", e)
@@ -1321,14 +1411,58 @@ def read_all(up):
 
 
 def open_first(urls):
-    """Thử lần lượt nhiều URL cho tới khi có cái mở được."""
-    errs = []
-    for u in urls:
-        up, err = open_upstream(u)
-        if up is not None:
-            return up, u, errs
-        errs.append(err)
-    return None, None, errs
+    """Mở link tải đầu tiên dùng được. Link đầu chậm quá OPEN_HEDGE giây (hoặc hỏng) thì thử luôn link kế, ai mở được trước thắng."""
+    urls = list(dict.fromkeys(urls))
+    if len(urls) <= 1:
+        errs = []
+        for u in urls:
+            up, err = open_upstream(u)
+            if up is not None:
+                return up, u, errs
+            errs.append(err)
+        return None, None, errs
+    errs, futs, winner, started = {}, {}, None, 0
+    pending = set()
+
+    def start_next():
+        nonlocal started
+        f = _race_pool.submit(open_upstream, urls[started])
+        futs[f] = started
+        pending.add(f)
+        started += 1
+    start_next()
+    while winner is None and (pending or started < len(urls)):
+        done, _ = fwait(pending, timeout=OPEN_HEDGE if started < len(urls) else None, return_when=FIRST_COMPLETED)
+        if not done:
+            start_next()
+            continue
+        for f in done:
+            pending.discard(f)
+            i = futs[f]
+            try:
+                up, err = f.result()
+            except Exception as e:
+                up, err = None, f"{type(e).__name__}: {e}"
+            if up is not None and winner is None:
+                winner = (up, urls[i])
+            elif up is not None:
+                up.close()
+            else:
+                errs[i] = err
+                if winner is None and started < len(urls):
+                    start_next()
+    def drop(f):   # các lần mở thua cuộc: đóng kết nối khi xong để khỏi rò
+        try:
+            r = f.result()[0]
+            if r is not None:
+                r.close()
+        except Exception:
+            pass
+    for f in pending:
+        f.add_done_callback(drop)
+    if winner:
+        return winner[0], winner[1], [errs[i] for i in sorted(errs)]
+    return None, None, [errs[i] for i in sorted(errs)]
 
 
 def content_disposition(filename, inline=False):
@@ -1529,6 +1663,12 @@ def health():
     return "ok", 200, {"Cache-Control": "no-store"}
 
 
+@app.route("/ping", methods=["GET", "HEAD"])
+def ping():
+    """Siêu nhẹ cho dịch vụ giữ máy chủ thức (UptimeRobot, cron-job.org): không log, không xử lý gì."""
+    return "ok", 200, {"Cache-Control": "no-store", "Content-Type": "text/plain"}
+
+
 @app.post("/api/info")
 def api_info():
     body = request.get_json(silent=True) or {}
@@ -1540,6 +1680,9 @@ def api_info():
 
     if body.get("hq"):
         return jsonify(hq_payload(url))
+    kind = listing_kind(url)
+    if kind:
+        return jsonify(error=f"Đây là {kind}, không phải một video.", code="listing", kind=kind), 409
 
     try:
         data = get_tikwm(url)
@@ -2416,7 +2559,7 @@ def api_v1_errors():
     if not os.environ.get("API_KEY"):
         return jsonify(error="Hãy đặt API_KEY trên server để xem log lỗi."), 403
     if not api_key_ok():
-        return jsonify(error="Sai hoặc thiếu key."), 401
+        return jsonify(error=key_msg()), 401
     as_text = request.values.get("format") == "text"
     eid = request.values.get("id", "")
     if request.values.get("analyze") in ("1", "true"):
@@ -2467,17 +2610,44 @@ def api_v1_errors():
          "count": r["count"], "diagnosed": bool(r.get("diagnosis"))} for r in recs]})
 
 
+_INVIS = dict.fromkeys(map(ord, "\u200b\u200c\u200d\u2060\ufeff\u00a0"), None)
+
+
+def clean_key(v):
+    """Bỏ khoảng trắng/xuống dòng/ký tự vô hình mà Phím tắt hay dán thừa vào khoá."""
+    v = str(v or "").translate(_INVIS).strip().strip("\"'")
+    return v[7:].strip() if v.lower().startswith("bearer ") else v
+
+
+def given_key():
+    for name, v in (("header X-API-Key", request.headers.get("X-API-Key")), ("header Authorization", request.headers.get("Authorization")),
+                    ("trường key", request.values.get("key")), ("trường api_key", request.values.get("api_key")),
+                    ("trường apikey", request.values.get("apikey"))):
+        if v and clean_key(v):
+            return clean_key(v), name
+    return "", ""
+
+
 def api_key_ok():
-    expected = os.environ.get("API_KEY", "")
+    expected = clean_key(os.environ.get("API_KEY", ""))
     if not expected:
         return True
-    given = request.headers.get("X-API-Key") or request.values.get("key", "")
-    return hmac.compare_digest(given.encode(), expected.encode())
+    return hmac.compare_digest(given_key()[0].encode(), expected.encode())
+
+
+def key_msg():
+    """Thông báo 401 nói rõ: không nhận được key, hay có nhận nhưng sai (kèm vài ký tự đầu để đối chiếu)."""
+    g_, where = given_key()
+    if not g_:
+        return ("Sai hoặc thiếu key. Chưa thấy key nào trong yêu cầu: hãy gửi header X-API-Key hoặc trường key "
+                "(trong URL, Form hoặc JSON).")
+    return (f"Sai hoặc thiếu key. Đã thấy key ở {where} ({len(g_)} ký tự, bắt đầu '{g_[:3]}…') nhưng không khớp API_KEY "
+            "trên Render. Kiểm tra: đã đổi API_KEY trên Render chưa (nhớ Save và đợi deploy lại), key trong Phím tắt có bị thiếu/thừa ký tự không.")
 
 
 def api_fetch():
     if not api_key_ok():
-        return None, (jsonify(error="Sai hoặc thiếu key."), 401)
+        return None, (jsonify(error=key_msg()), 401)
     url = (request.values.get("url") or "").strip()
     if not is_supported_url(url):
         return None, (jsonify(error="Link không được hỗ trợ."), 400)
@@ -2505,7 +2675,7 @@ def abs_link(token):
 def api_debug():
     """Chẩn đoán: thử từng nguồn và báo kết quả (cần key). Mở: /api/debug?url=LINK&key=KEY"""
     if not api_key_ok():
-        return jsonify(error="Sai hoặc thiếu key."), 401
+        return jsonify(error=key_msg()), 401
     m = re.search(r"https?://[^\s]+", request.values.get("url") or "")
     url = m.group(0) if m else ""
     if not is_tiktok_url(url):
@@ -2626,7 +2796,9 @@ def v1_get(kind):
     if pg:
         return pg
     quality = request.values.get("quality") or ("wm" if request.values.get("wm") in ("1", "true") else "hd")
-    want_redirect = request.values.get("mode") == "redirect"
+    mode = request.values.get("mode")
+    want_redirect = mode == "redirect"
+    fast_redirect = V1_REDIRECT and mode != "proxy"   # V1_REDIRECT=1: link nằm trên tikwm thì cho iPhone tải thẳng, bỏ qua Render
 
     if kind == "auto":
         kind = "image" if data["is_photo"] else "video"
@@ -2640,7 +2812,7 @@ def v1_get(kind):
                 return download_ytdlp(cands[0])
             except Exception as e:
                 return jsonify(error=f"Không tải được video ({e})"), ST_UPSTREAM
-        if want_redirect:
+        if want_redirect or (fast_redirect and (urlparse(cands[0]["url"]).hostname or "").endswith("tikwm.com")):
             return redirect(cands[0]["url"], code=302)
         up, used, errs = open_first([c["url"] for c in cands])
         if up is None:
@@ -3399,7 +3571,7 @@ def api_v1_ai():
     """Cho Phím tắt: task = transcript | srt | summary | chapters | caption | hashtags | translate | ideas |
     describe | ask(q) | post(platform) | comments | script | all.  Thêm format=text để nhận văn bản thuần."""
     if not api_key_ok():
-        return jsonify(error="Sai hoặc thiếu key."), 401
+        return jsonify(error=key_msg()), 401
     url = (request.values.get("url") or "").strip()
     m = re.search(r"https?://[^\s]+", url)
     url = m.group(0) if m else url
@@ -3812,8 +3984,8 @@ def api_v1_solve():
     request.get_data(cache=True)  # phải đọc body thô trước khi form bị phân tích, để quét được mọi kiểu gửi ảnh
     as_text = request.values.get("format") == "text" or bool(request.values.get("part"))
     if not api_key_ok():
-        return (Response("LỖI: Sai hoặc thiếu key.", status=401, mimetype="text/plain; charset=utf-8") if as_text
-                else (jsonify(error="Sai hoặc thiếu key."), 401))
+        return (Response("LỖI: " + key_msg(), status=401, mimetype="text/plain; charset=utf-8") if as_text
+                else (jsonify(error=key_msg()), 401))
     if not rate_ok("solve", SOLVE_LIMIT, 600):
         return solve_fail(AIError(f"Bạn đã giải hết {SOLVE_LIMIT} bài trong 10 phút, hãy đợi một chút rồi thử lại.", "rate"), as_text)
     mode = (request.values.get("mode") or "full").lower()
@@ -4113,7 +4285,7 @@ def batch_text(job):
 def batch_view(v1):
     """POST/GET tạo job. v1=True: dành cho Phím tắt (cần API_KEY, hỗ trợ wait= và format=text)."""
     if v1 and not api_key_ok():
-        return jsonify(error="Sai hoặc thiếu key."), 401
+        return jsonify(error=key_msg()), 401
     body = request.get_json(silent=True) if request.is_json else None
     body = body if isinstance(body, dict) else {}
     raw = body.get("urls", body.get("url"))
@@ -4153,7 +4325,7 @@ def batch_respond(job, v1):
 
 def batch_status_view(jid, v1):
     if v1 and not api_key_ok():
-        return jsonify(error="Sai hoặc thiếu key."), 401
+        return jsonify(error=key_msg()), 401
     jobs_gc()
     job = _jobs.get(jid)
     if not job:
@@ -4314,7 +4486,7 @@ def channel_public(res):
 def channel_fetch(v1):
     """-> (res, None) hoặc (None, (json, mã))."""
     if v1 and not api_key_ok():
-        return None, (jsonify(error="Sai hoặc thiếu key."), 401)
+        return None, (jsonify(error=key_msg()), 401)
     body = request.get_json(silent=True) if request.is_json else None
     body = body if isinstance(body, dict) else {}
     user = parse_channel(str(body.get("user") or request.values.get("user") or request.values.get("url") or ""))
@@ -4391,6 +4563,379 @@ def api_channel_zip():
     job, err = batch_create(entries, kind, str(body.get("quality") or "hd").lower(), f"beysnap_{user}_{len(entries)}", False,
                             str(body.get("webhook") or "").strip() if webhook_ok(str(body.get("webhook") or "").strip()) else "")
     return err if err else jsonify(batch_public(job))
+
+
+# ======================= Phụ đề có sẵn của nguồn (yt-dlp) + phụ đề AI/dịch qua API =======================
+def srt_to_segments(text):
+    segs = []
+    for blk in re.split(r"\n\s*\n", (text or "").replace("\r", "").strip()):
+        lines = [l for l in blk.split("\n") if l.strip() != ""]
+        i = next((k for k, l in enumerate(lines) if "-->" in l), None)
+        if i is None:
+            continue
+        a, _, b = lines[i].partition("-->")
+        def sec(t):
+            t = t.strip().split(" ")[0].replace(",", ".")
+            parts = t.split(":")
+            try:
+                v = [float(x) for x in parts]
+            except ValueError:
+                return 0.0
+            while len(v) < 3:
+                v.insert(0, 0.0)
+            return v[0] * 3600 + v[1] * 60 + v[2]
+        body = "\n".join(lines[i + 1:]).strip()
+        if body:
+            segs.append({"start": sec(a), "end": sec(b), "text": body})
+    return segs
+
+
+def vtt_to_srt(text):
+    """WebVTT -> SRT. Phụ đề tự động của YouTube lặp dòng cũ ở mỗi khung (cuộn chữ): bỏ dòng đã hiện ở khung trước."""
+    cues, prev = [], []
+    for blk in re.split(r"\n\s*\n", (text or "").replace("\r", "").strip()):
+        lines = blk.split("\n")
+        i = next((k for k, l in enumerate(lines) if "-->" in l), None)
+        if i is None:
+            continue
+        a, _, b = lines[i].partition("-->")
+        body = [re.sub(r"<[^>]+>", "", l).strip() for l in lines[i + 1:]]
+        body = [l for l in body if l]
+        fresh = [l for l in body if l not in prev]
+        prev = body or prev
+        if not fresh:
+            continue
+        cues.append({"start": 0, "end": 0, "a": a, "b": b, "text": "\n".join(fresh)})
+    def fix(t):
+        t = t.strip().split(" ")[0].replace(".", ",")
+        return ("00:" + t) if t.count(":") == 1 else t
+    return "\n".join(f"{n}\n{fix(c['a'])} --> {fix(c['b'])}\n{c['text']}\n" for n, c in enumerate(cues, 1))
+
+
+def srt_to_vtt(srt):
+    return "WEBVTT\n\n" + re.sub(r"(\d\d:\d\d:\d\d),(\d{3})", r"\1.\2", srt or "")
+
+
+_SUB_AUTO_LANGS = ("vi", "en", "ja", "ko", "zh-Hans", "zh-Hant", "zh", "es", "fr", "th", "id", "de", "ru", "pt")
+
+
+def native_subs(url):
+    """Danh sách phụ đề có sẵn (người đăng tự làm hoặc tự động) của video, kèm link file. Cache 15 phút."""
+    key = "subs:" + url
+    hit = cache_get(key)
+    if hit is not None:
+        return hit
+    if yt_dlp is None:
+        raise RuntimeError("yt-dlp chưa cài")
+    opts = {"quiet": True, "skip_download": True, "socket_timeout": 20, "noplaylist": True,
+            **({"proxy": OUTBOUND_PROXY} if OUTBOUND_PROXY else {}), **({"cookiefile": COOKIE_FILE} if COOKIE_FILE else {})}
+    with yt_dlp.YoutubeDL(opts) as ydl:
+        info = ydl.extract_info(url, download=False) or {}
+    out = {}
+    for auto, src in ((False, info.get("subtitles")), (True, info.get("automatic_captions"))):
+        for lang, fmts in (src or {}).items():
+            if lang == "live_chat" or (lang in out and not out[lang]["auto"]):
+                continue
+            if auto and not (lang in _SUB_AUTO_LANGS or lang.endswith("-orig")):
+                continue
+            pick = next((f for e in ("vtt", "srt") for f in (fmts or []) if f.get("ext") == e and f.get("url")), None)
+            if pick:
+                out[lang] = {"lang": lang, "auto": auto, "ext": pick["ext"], "url": pick["url"],
+                             "name": (pick.get("name") or lang) + (" (tự động)" if auto else "")}
+    res = {"title": info.get("title") or "", "subs": sorted(out.values(), key=lambda x: (x["auto"], x["lang"]))}
+    cache_set(key, res, ttl=900)
+    return res
+
+
+def get_sub_srt(url, lang=""):
+    d = native_subs(url)
+    if not d["subs"]:
+        raise RuntimeError("Video này không có phụ đề sẵn")
+    sel = (next((x for x in d["subs"] if x["lang"] == lang), None) if lang else None) \
+        or next((x for x in d["subs"] if not x["auto"]), None) or d["subs"][0]
+    if lang and sel["lang"] != lang and not sel["lang"].startswith(lang):
+        raise RuntimeError(f"Không có phụ đề ngôn ngữ '{lang}'. Có: " + ", ".join(x["lang"] for x in d["subs"]))
+    r = http.get(sel["url"], headers={"User-Agent": UA}, timeout=15)
+    r.raise_for_status()
+    if len(r.content) > 3_000_000:
+        raise RuntimeError("file phụ đề quá lớn")
+    raw = r.text
+    srt = raw if sel["ext"] == "srt" else vtt_to_srt(raw)
+    if not srt.strip():
+        raise RuntimeError("phụ đề rỗng")
+    return srt, sel, d["title"]
+
+
+def sub_response(srt, fmt, name):
+    if fmt == "txt":
+        body, ct, ext = "\n".join(sg["text"].replace("\n", " ") for sg in srt_to_segments(srt)), "text/plain", "txt"
+    elif fmt == "vtt":
+        body, ct, ext = srt_to_vtt(srt), "text/vtt", "vtt"
+    else:
+        body, ct, ext = srt, "application/x-subrip", "srt"
+    return Response(body, mimetype=ct, headers={"Content-Disposition": content_disposition(f"{name}.{ext}"),
+                                                "Content-Type": ct + "; charset=utf-8"})
+
+
+@app.get("/api/subs")
+def api_subs():
+    url = (request.args.get("url") or "").strip()
+    if not is_supported_url(url):
+        return jsonify(error="Link chưa được hỗ trợ."), 400
+    if not rate_ok("subs", 20, 300):
+        return jsonify(error="Bạn thao tác quá nhanh, thử lại sau ít phút."), 429
+    lang, fmt = request.args.get("lang", ""), (request.args.get("fmt") or "").lower()
+    try:
+        if not fmt:
+            d = native_subs(url)
+            return jsonify(title=d["title"], subs=[{k: x[k] for k in ("lang", "name", "auto")} for x in d["subs"]])
+        srt, sel, title = get_sub_srt(url, lang)
+        return sub_response(srt, fmt, safe_name(title, "phude") + "_" + sel["lang"])
+    except Exception as e:
+        report_error("/api/subs", e, url=url)
+        return jsonify(error=f"Không lấy được phụ đề: {e}"), ST_UPSTREAM
+
+
+@app.route("/api/v1/subtitles", methods=["GET", "POST"])
+def api_v1_subtitles():
+    """Phụ đề của một video. url=, lang= (ngôn ngữ phụ đề sẵn, vd vi/en), translate= (dịch sang ngôn ngữ này bằng AI),
+    source=auto|native|ai (auto: dùng phụ đề sẵn nếu có, không thì AI nghe lời thoại), format=srt|vtt|txt|json."""
+    if not api_key_ok():
+        return jsonify(error=key_msg()), 401
+    body = request.get_json(silent=True) if request.is_json else None
+    body = body if isinstance(body, dict) else {}
+    val = lambda k, d="": str(body.get(k) or request.values.get(k) or d).strip()
+    url = extract_urls(val("url") or val("text"))
+    url = url[0] if url else ""
+    if not is_supported_url(url):
+        return jsonify(error="Thiếu link hợp lệ (tham số url)."), 400
+    source, fmt, lang, target = val("source", "auto").lower(), val("format", "srt").lower(), val("lang"), val("translate")
+    if not rate_ok("subs", 20, 300):
+        return jsonify(error="Bạn thao tác quá nhanh, thử lại sau ít phút."), 429
+    srt, via, title = "", "", ""
+    errs = []
+    if source in ("auto", "native"):
+        try:
+            srt, sel, title = get_sub_srt(url, lang)
+            via = "native:" + sel["lang"]
+        except Exception as e:
+            errs.append(str(e))
+    rec = None
+    if not srt and source in ("auto", "ai"):
+        g = ai_guard()
+        if g:
+            return g
+        try:
+            _, rec = ensure_transcript(url, False, lang)
+            srt = make_srt(rec["segments"])
+            via, title = "ai", rec.get("title", "")
+            if not srt:
+                errs.append("AI không nghe thấy lời thoại")
+        except Exception as e:
+            return ai_fail(e)
+    if not srt:
+        return jsonify(error="Không có phụ đề: " + "; ".join(errs)), 404
+    if target:
+        g = ai_guard()
+        if g:
+            return g
+        try:
+            if rec is None:
+                segs = srt_to_segments(srt)
+                rec = {"text": " ".join(x["text"] for x in segs), "segments": segs, "tr": {}}
+            tr = translate_rec(rec, target)
+            srt, via = (tr["srt"] or srt), via + "+translate:" + target
+        except Exception as e:
+            return ai_fail(e)
+    if fmt == "json":
+        return jsonify(via=via, srt=srt, segments=srt_to_segments(srt))
+    return sub_response(srt, fmt if fmt in ("srt", "vtt", "txt") else "srt", safe_name(title or "phude", "phude"))
+
+
+# ======================= Danh sách kênh/playlist của nhiều trang (yt-dlp) =======================
+IG_RESERVED = {"p", "reel", "reels", "tv", "stories", "explore", "accounts", "direct", "about", "web", "s", "share"}
+
+
+def listing_kind(url):
+    """Link kênh/hồ sơ/playlist (không phải một video) -> tên loại; không phải -> ''."""
+    try:
+        u = urlparse(url)
+    except ValueError:
+        return ""
+    path, q = u.path.rstrip("/"), parse_qs(u.query)
+    if host_match(url, ("youtube.com",)):
+        if path == "/playlist" and q.get("list"):
+            return "playlist YouTube"
+        if re.fullmatch(r"/(@[^/]+|channel/[^/]+|c/[^/]+|user/[^/]+)(/(videos|shorts|streams))?", path):
+            return "kênh YouTube"
+    if host_match(url, ("instagram.com",)):
+        m = re.fullmatch(r"/([\w.]{1,30})", path)
+        if m and m.group(1).lower() not in IG_RESERVED:
+            return "hồ sơ Instagram"
+    if host_match(url, ("space.bilibili.com",)) and re.match(r"/\d+", path):
+        return "kênh Bilibili"
+    if host_match(url, ("dailymotion.com",)) and re.fullmatch(r"/(playlist/[\w]+|[\w.-]+)", path) and not path.startswith(("/video", "/embed")):
+        return "kênh/playlist Dailymotion"
+    if host_match(url, ("soundcloud.com",)) and re.fullmatch(r"/[\w-]+(/(tracks|sets/[\w-]+|albums))?", path) and path.count("/") <= 3:
+        return "nghệ sĩ/playlist SoundCloud"
+    if host_match(url, ("twitch.tv",)) and re.fullmatch(r"/[\w]+/videos", path):
+        return "kênh Twitch"
+    if host_match(url, ("vimeo.com",)) and re.fullmatch(r"/(user\d+|[A-Za-z][\w-]+)(/videos)?", path):
+        return "kênh Vimeo"
+    return ""
+
+
+def ytdlp_listing(url, count):
+    key = f"ls:{count}:{url}"
+    hit = cache_get(key)
+    if hit is not None:
+        return hit
+    if yt_dlp is None:
+        raise RuntimeError("yt-dlp chưa cài")
+    opts = {"quiet": True, "skip_download": True, "extract_flat": True, "playlistend": count, "socket_timeout": 20,
+            **({"proxy": OUTBOUND_PROXY} if OUTBOUND_PROXY else {}), **({"cookiefile": COOKIE_FILE} if COOKIE_FILE else {})}
+    with yt_dlp.YoutubeDL(opts) as ydl:
+        info = ydl.extract_info(url, download=False) or {}
+    items = []
+    for e in info.get("entries") or []:
+        if not isinstance(e, dict):
+            continue
+        u = e.get("url") or e.get("webpage_url") or ""
+        if not str(u).startswith("http") and e.get("id") and host_match(url, ("youtube.com",)):
+            u = f"https://www.youtube.com/watch?v={e['id']}"
+        if not (str(u).startswith("http") and is_supported_url(u)):
+            continue
+        thumbs = e.get("thumbnails") or []
+        items.append({"id": str(e.get("id") or len(items)), "url": u, "title": str(e.get("title") or "")[:120],
+                      "cover": str((thumbs[-1].get("url") if thumbs else e.get("thumbnail")) or ""),
+                      "duration": int(e.get("duration") or 0), "is_photo": False})
+    if not items:
+        raise RuntimeError("không liệt kê được video nào (kênh riêng tư, cần đăng nhập, hoặc nguồn đang chặn máy chủ)")
+    res = {"title": str(info.get("title") or info.get("uploader") or "")[:80], "videos": items[:count]}
+    cache_set(key, res, ttl=600)
+    return res
+
+
+@app.post("/api/playlist")
+def api_playlist():
+    body = request.get_json(silent=True) or {}
+    url = str(body.get("url") or "").strip()
+    kind = listing_kind(url) if is_supported_url(url) else ""
+    if not kind:
+        return jsonify(error="Đây không phải link kênh/playlist được hỗ trợ."), 400
+    if not rate_ok("playlist", 10, 300):
+        return jsonify(error="Bạn thao tác quá nhanh, thử lại sau ít phút."), 429
+    count = max(1, min(int(_num(body.get("count"), 1, 100, 10)), BATCH_MAX_ITEMS))
+    try:
+        res = ytdlp_listing(url, count)
+    except Exception as e:
+        report_error("/api/playlist", e, url=url, loai=kind)
+        return jsonify(error=f"Không lấy được danh sách ({kind}): {e}"), ST_UPSTREAM
+    return jsonify(user=res["title"] or kind, kind=kind, generic=True, count=len(res["videos"]), videos=res["videos"], nickname="")
+
+
+# ======================= Xem thử video (hỗ trợ Range để Safari/iPhone phát được) =======================
+@app.get("/api/preview")
+def api_preview():
+    entry = _tokens.get(request.args.get("t", ""))
+    if not entry or entry["exp"] < time.time():
+        return Response("Link đã hết hạn", 410)
+    url = entry.get("url")
+    if not url or entry.get("mode", "direct") != "direct":
+        return Response("Không xem thử được bản này", 400)
+    host = (urlparse(url).hostname or "").lower()
+    ref = next((r for h, r in REFERERS if host == h or host.endswith("." + h)), None) or (
+        "https://www.tikwm.com/" if host.endswith("tikwm.com") else "https://www.tiktok.com/")
+    hdr = {"User-Agent": UA, "Accept": "*/*", "Accept-Encoding": "identity", "Referer": ref}
+    if request.headers.get("Range"):
+        hdr["Range"] = request.headers["Range"]
+    try:
+        up = http.get(url, stream=True, timeout=(10, 30), headers=hdr)
+    except requests.RequestException as e:
+        return Response(f"Nguồn không phản hồi: {e}", ST_UPSTREAM)
+    if up.status_code >= 400 or bad_ctype(up):
+        code = up.status_code
+        up.close()
+        return Response(f"Nguồn từ chối (HTTP {code})", ST_UPSTREAM if code < 500 else code)
+    out = {"Content-Type": up.headers.get("Content-Type") or "video/mp4", "Accept-Ranges": "bytes", "Cache-Control": "private, max-age=600",
+           "Content-Disposition": "inline"}
+    for k in ("Content-Length", "Content-Range"):
+        if up.headers.get(k):
+            out[k] = up.headers[k]
+    return Response(stream_with_context(up.iter_content(chunk_size=131072)), status=up.status_code if up.status_code in (200, 206) else 200, headers=out)
+
+
+# ======================= Trang trạng thái =======================
+APP_STARTED = time.time()
+APP_VERSION = "7.4"
+_probe_cache = {"t": 0.0, "data": None}
+
+
+def status_data():
+    now = time.time()
+    try:
+        ydv = yt_dlp.version.__version__ if yt_dlp else ""
+    except Exception:
+        ydv = ""
+    tw_state = "blocked" if now < _tw_block["until"] else ("ok" if _tw_stat["ok"] and _tw_stat["last_ok"] >= _tw_stat["last_fail"] else
+               ("error" if _tw_stat["fail"] else "unknown"))
+    alts = []
+    for name in sorted(set(_alt_stat) | set(_prov)):
+        ok, bad = _alt_stat.get(name, (0, 0))
+        st = _prov.get(name, {})
+        alts.append({"name": name, "ok": ok, "fail": bad, "avg_ms": int(st.get("lat", 0) * 1000) if st else None,
+                     "resting": bool(st and st.get("until", 0) > now)})
+    recent = [e for e in list(_errors) if now - e.get("last", 0) < 3600]
+    by = {}
+    for e in recent:
+        by[e["where"]] = by.get(e["where"], 0) + e.get("count", 1)
+    return {"version": APP_VERSION, "uptime_s": int(now - APP_STARTED), "now": int(now),
+            "tikwm": {"state": tw_state, "ok": _tw_stat["ok"], "fail": _tw_stat["fail"], "blocked_for_s": max(0, int(_tw_block["until"] - now)),
+                      "last_ok_s": int(now - _tw_stat["last_ok"]) if _tw_stat["last_ok"] else None},
+            "alt_providers": alts,
+            "tools": {"yt_dlp": ydv or False, "gallery_dl": bool(gallery_dl) if "gallery_dl" in globals() else None,
+                      "curl_cffi": bool(cffi)},
+            "config": {"proxy": bool(OUTBOUND_PROXY), "relay": bool(TIKWM_RELAY), "ai": bool(os.environ.get("GROQ_API_KEY")),
+                       "cookies": bool(COOKIE_FILE)},
+            "load": {"active_jobs": sum(1 for j in _jobs.values() if j["status"] in ("queued", "running")),
+                     "tokens": len(_tokens), "cache": len(_cache), "threads": threading.active_count()},
+            "errors_last_hour": by}
+
+
+def status_probe():
+    now = time.time()
+    if _probe_cache["data"] and now - _probe_cache["t"] < 30:
+        return _probe_cache["data"]
+    targets = {"tikwm": "https://www.tikwm.com/", "tiktok": "https://www.tiktok.com/", "youtube": "https://www.youtube.com/",
+               "instagram": "https://www.instagram.com/", "x": "https://x.com/", "facebook": "https://www.facebook.com/"}
+    def one(name, u):
+        t0 = time.time()
+        try:
+            r = http.get(u, headers={"User-Agent": UA}, timeout=6, stream=True)
+            code = r.status_code
+            r.close()
+            return name, {"ok": code < 400, "code": code, "ms": int((time.time() - t0) * 1000)}
+        except Exception as e:
+            return name, {"ok": False, "code": 0, "ms": int((time.time() - t0) * 1000), "err": type(e).__name__}
+    futs = [_bg_pool.submit(one, n, u) for n, u in targets.items()]
+    data = dict(f.result(timeout=15) for f in futs)
+    _probe_cache.update(t=now, data=data)
+    return data
+
+
+@app.get("/api/status")
+def api_status():
+    d = status_data()
+    if request.args.get("probe"):
+        if not rate_ok("probe", 4, 60):
+            return jsonify(error="Kiểm tra quá nhanh, thử lại sau một phút."), 429
+        d["probe"] = status_probe()
+    return jsonify(d), 200, {"Cache-Control": "no-store"}
+
+
+@app.get("/status")
+def status_page():
+    return static_page("status.html")
 
 
 # ======================= PWA (cài lên màn hình chính + nhận link từ nút Chia sẻ) =======================

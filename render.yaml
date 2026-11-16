@@ -45,3 +45,7 @@ services:
         value: "60"
       - key: TOOL_MAX_SEC
         value: "90"
+      - key: TW_BUDGET
+        value: "40"           # tổng giây tối đa chờ các nguồn trước khi báo lỗi (Phím tắt thường timeout ~60s)
+      - key: V1_REDIRECT
+        value: "0"            # 1 = /api/v1/video chuyển hướng thẳng tới CDN tikwm (nhanh nhất, bỏ qua băng thông Render)

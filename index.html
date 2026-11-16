@@ -12,7 +12,7 @@
 <meta name="apple-mobile-web-app-title" content="Beysnap">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'"><noscript><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"></noscript>
 <style>
   :root {
     --bg1:#f5f5f7; --bg2:#f5f5f7; --card:#ffffff; --ink:#1d1d1f; --muted:#6e6e73; --line:#e5e5ea; --fill:#f2f2f7; --fill2:#e9e9ee;
@@ -241,7 +241,9 @@
     </div>
     <div class="tabs" id="tabs" role="tablist"></div>
 
-    <div class="panel" id="p-video"><div class="list" id="vlist"></div>
+    <div class="panel" id="p-video">
+      <div class="toolbar"><button class="btn soft" id="pvBtn" type="button">▶ Xem thử</button></div><div id="pvBox"></div>
+      <div class="list" id="vlist"></div>
       <div class="more" id="moreWrap"><button class="btn gold" id="hqBtn" type="button">🔍 Tìm chất lượng cao hơn (có thể mất vài giây)</button></div>
       <p class="note" id="vnote"></p>
       <details class="box tools" id="tools">
@@ -264,6 +266,12 @@
           <select id="shareHrs" aria-label="Thời hạn link"><option value="1">Link sống 1 giờ</option><option value="6">6 giờ</option><option value="24">24 giờ</option></select>
           <button class="btn soft" id="shareBtn" type="button">📱 Chia sẻ / mã QR</button>
         </div>
+        <div class="row">
+          <button class="btn soft" id="subLoad" type="button">📝 Phụ đề có sẵn</button>
+          <select id="subLang" style="display:none" aria-label="Ngôn ngữ phụ đề"></select>
+          <button class="mini" id="subSrt" type="button" style="display:none">.srt</button><button class="mini" id="subVtt" type="button" style="display:none">.vtt</button><button class="mini" id="subTxt" type="button" style="display:none">.txt</button>
+        </div>
+        <p class="note" id="subNote" style="display:none"></p>
         <p class="note" id="toolNote">Để trống “từ/đến” để lấy cả video. Cắt nhanh không mã hoá lại nên điểm cắt có thể lệch vài giây; tick “chính xác” hoặc chọn 720p/480p thì máy chủ mã hoá lại (tối đa 90 giây, GIF/WebP tối đa 15 giây, video nguồn tối đa 60 MB).</p>
       </details></div>
 
@@ -353,7 +361,7 @@
     <p class="note">Chỉ lưu trong trình duyệt này (20 link gần nhất), không cần tài khoản. Chạm để tải lại.</p>
   </section>
 
-  <footer>Chỉ tải nội dung bạn có quyền sử dụng. Video và ảnh thuộc bản quyền của tác giả, hãy ghi nguồn khi đăng lại.<br><a href="/docs">Tài liệu API cho Phím tắt iPhone</a></footer>
+  <footer>Chỉ tải nội dung bạn có quyền sử dụng. Video và ảnh thuộc bản quyền của tác giả, hãy ghi nguồn khi đăng lại.<br><a href="/docs">Tài liệu API cho Phím tắt iPhone</a> · <a href="/status">Trạng thái hệ thống</a></footer>
 </main>
 
 <dialog id="lb"><img id="lbImg" alt=""><div class="nav">
@@ -445,7 +453,7 @@ async function post(path, body) {
   if (path.startsWith('/api/ai/')) { const k = getKey(); if (k) headers['X-Groq-Key'] = k; }
   const r = await fetch(path, { method: 'POST', headers, body: JSON.stringify(body) });
   let d = {}; try { d = await r.json(); } catch {}
-  if (!r.ok) { const e = new Error(d.error || 'Có lỗi xảy ra (' + r.status + ')'); e.code = d.code; e.probe = d.probe; throw e; }
+  if (!r.ok) { const e = new Error(d.error || 'Có lỗi xảy ra (' + r.status + ')'); e.code = d.code; e.probe = d.probe; e.status = r.status; e.kind = d.kind; throw e; }
   return d;
 }
 $('form').onsubmit = async e => {
@@ -454,16 +462,39 @@ $('form').onsubmit = async e => {
   if (user) { loadChannel(user); return; }                       // @tên_kênh hoặc link hồ sơ TikTok
   const links = [...new Set(raw.match(/https?:\/\/[^\s]+/g) || [])];
   if (links.length > 1) { openBatch(links); return; }            // nhiều link: chuyển sang tải hàng loạt
+  const fresh = $('card').dataset.url === extractUrl(raw);      // bấm Tải lại đúng link đang xem = lấy mới, bỏ bộ nhớ đệm
   curUrl = extractUrl(raw); $('url').value = curUrl; tid = null; selected.clear();
   $('go').disabled = true; $('loading').style.display = 'block';
   $('rescue').style.display = 'none';
   try {
-    cur = await post('/api/info', { url: curUrl }); render(cur);
+    cur = await fetchInfo(curUrl, fresh); render(cur); $('card').dataset.url = curUrl;
     histAdd({ url: curUrl, title: cur.title || '', author: cur.author || '', cover: cur.cover || '', kind: cur.is_photo ? 'photo' : 'video' });
   }
-  catch (ex) { showErr(ex.message); if (ex.code === 'blocked') rescue(ex.probe); }
-  finally { $('go').disabled = false; $('loading').style.display = 'none'; }
+  catch (ex) {
+    if (ex.code === 'listing') { await loadPlaylist(curUrl); return; }   // link kênh/playlist: chuyển sang chọn nhiều video
+    showErr(ex.message); if (ex.code === 'blocked') rescue(ex.probe);
+  }
+  finally { $('go').disabled = false; $('loading').style.display = 'none'; setLoading('Đang xử lý…'); }
 };
+/* lấy thông tin: bộ nhớ đệm 10 phút (link tải sống 15 phút) + tự thử lại 2 lần khi nguồn bận (HTTP 424/5xx/mất mạng) */
+const setLoading = t => { const d = $('loading').querySelector('div'); if (d) d.textContent = t; };
+async function fetchInfo(url, fresh) {
+  const ck = 'bsinfo:' + url;
+  if (!fresh) { try { const c = JSON.parse(sessionStorage.getItem(ck)); if (c && Date.now() - c.t < 10 * 60e3) return c.d; } catch {} }
+  let last;
+  for (let i = 0; i < 3; i++) {
+    try {
+      const d = await post('/api/info', { url });
+      try { const j = JSON.stringify({ t: Date.now(), d }); if (j.length < 150000) sessionStorage.setItem(ck, j); } catch {}
+      return d;
+    } catch (ex) {
+      last = ex;
+      if (ex.code === 'blocked' || ex.code === 'listing' || (ex.status >= 400 && ex.status < 500 && ex.status !== 424)) throw ex;
+      if (i < 2) { setLoading(`Nguồn đang bận, thử nguồn khác (lần ${i + 2}/3)…`); await wait(2500 + i * 2000); }
+    }
+  }
+  throw last;
+}
 /* Cứu hộ khi máy chủ bị chặn IP: trình duyệt của bạn (IP nhà) lấy JSON rồi gửi lên /api/ingest */
 async function ingest(url, data) {
   cur = await post('/api/ingest', { url, data }); showErr(''); $('rescue').style.display = 'none'; render(cur);
@@ -496,6 +527,8 @@ fetch('/health').catch(() => {}); // đánh thức server sớm
 
 /* ---------- hiển thị kết quả ---------- */
 function render(d) {
+  $('pvBox').replaceChildren(); $('pvBtn').textContent = '▶ Xem thử'; $('pvBtn').style.display = d.videos.length ? '' : 'none';
+  $('subLang').style.display = 'none'; ['subSrt', 'subVtt', 'subTxt'].forEach(i => $(i).style.display = 'none'); $('subNote').style.display = 'none'; $('subLoad').textContent = '📝 Phụ đề có sẵn';
   if (d.warning) showErr('⚠️ ' + d.warning);  // vd. Threads chỉ lấy được ảnh xem trước
   $('cover').src = d.cover || ''; $('cover').style.display = d.cover ? '' : 'none';
   $('title').textContent = d.title || '(Không có tiêu đề)';
@@ -678,7 +711,7 @@ $('aiBtn').onclick = () => aiRun($('aiBtn'), async res => {
     if (!t.visual && !cur.title) return;
   } else {
   const extra = [el('button', { class: 'mini', type: 'button', text: '.txt', onclick: () => saveBlob(new Blob([t.text], { type: 'text/plain' }), 'loithoai.txt') })];
-  if (t.srt) extra.push(el('button', { class: 'mini', type: 'button', text: '.srt', onclick: () => saveBlob(new Blob([t.srt], { type: 'text/plain' }), 'phude.srt') }));
+  if (t.srt) { origSrt = t.srt; extra.push(el('button', { class: 'mini', type: 'button', text: '.srt', onclick: () => saveBlob(new Blob([t.srt], { type: 'text/plain' }), 'phude.srt') }), el('button', { class: 'mini', type: 'button', text: '.vtt', onclick: () => saveBlob(new Blob([srt2vtt(t.srt)], { type: 'text/vtt' }), 'phude.vtt') })); }
   res.append(box(t.source === 'title' ? '📝 Mô tả bài viết' : '📝 Lời thoại' + (t.lang ? ` (${t.lang})` : ''), el('p', { class: 'scroll', text: t.text }), t.text, extra));
   }
   const st2 = note('✨ Đang tóm tắt và chia chương…'); res.append(st2);
@@ -704,7 +737,12 @@ $('trBtn').onclick = () => aiRun($('trBtn'), async res => {
   const name = $('lang').selectedOptions[0].textContent, extra = [
     el('button', { class: 'mini', type: 'button', text: '🔊', 'aria-label': 'Đọc to', onclick: () => speak(t.text, LANGTAG[lang] || 'vi-VN') }),
     el('button', { class: 'mini', type: 'button', text: '.txt', onclick: () => saveBlob(new Blob([t.text], { type: 'text/plain' }), 'ban_dich_' + lang + '.txt') })];
-  if (t.srt) extra.push(el('button', { class: 'mini', type: 'button', text: '.srt', onclick: () => saveBlob(new Blob([t.srt], { type: 'text/plain' }), 'phude_' + lang + '.srt') }));
+  if (t.srt) {
+    extra.push(el('button', { class: 'mini', type: 'button', text: '.srt', onclick: () => saveBlob(new Blob([t.srt], { type: 'text/plain' }), 'phude_' + lang + '.srt') }),
+      el('button', { class: 'mini', type: 'button', text: '.vtt', onclick: () => saveBlob(new Blob([srt2vtt(t.srt)], { type: 'text/vtt' }), 'phude_' + lang + '.vtt') }));
+    const both = srtMerge(origSrt, t.srt);
+    if (both) extra.push(el('button', { class: 'mini', type: 'button', text: 'song ngữ', title: 'Phụ đề gốc + bản dịch, mỗi khung hai dòng', onclick: () => saveBlob(new Blob([both], { type: 'text/plain' }), 'phude_songngu_' + lang + '.srt') }));
+  }
   const body = el('div', {}, el('p', { class: 'scroll', text: t.text }));
   if (t.truncated) body.append(note('Video dài nên chỉ dịch phần đầu (160 dòng).'));
   res.prepend(box('🌍 Bản dịch · ' + name, body, t.text, extra));
@@ -819,7 +857,7 @@ const mmss = s => s ? Math.floor(s / 60) + ':' + String(Math.floor(s % 60)).padS
 function chanRefresh() { $('chanZip').textContent = chanSel.size ? `📦 Tải ZIP (${chanSel.size})` : '📦 Tải ZIP'; $('chanZip').disabled = !chanSel.size; }
 function renderChannel() {
   followBtn();
-  $('chanTitle').textContent = `👤 @${chan.user}${chan.nickname ? ' · ' + chan.nickname : ''}`;
+  $('chanTitle').textContent = chan.generic ? `📃 ${chan.user} · ${chan.kind}` : `👤 @${chan.user}${chan.nickname ? ' · ' + chan.nickname : ''}`;
   const g = $('chanGrid'); g.replaceChildren();
   chan.videos.forEach((v, i) => {
     const ck = el('input', { type: 'checkbox', class: 'ck', 'aria-label': 'Chọn video ' + (i + 1) });
@@ -846,11 +884,23 @@ async function loadChannel(user) {
   } catch (ex) { showErr(ex.message); }
   finally { $('go').disabled = false; $('loading').style.display = 'none'; }
 }
-$('chanReload').onclick = () => chan && loadChannel(chan.user);
+$('chanReload').onclick = () => chan && (chan.generic ? loadPlaylist(chan.playlistUrl) : loadChannel(chan.user));
 $('chanAll').onclick = () => { chan.videos.forEach(v => chanSel.add(v.id)); renderChannel(); };
 $('chanNone').onclick = () => { chanSel.clear(); renderChannel(); };
 $('chanClose').onclick = () => { $('chanBox').style.display = 'none'; };
-$('chanZip').onclick = () => runJob(() => post('/api/channel/zip', { user: '@' + chan.user, ids: [...chanSel], kind: $('chanKind').value }), $('chanJob'), $('chanZip'));
+$('chanZip').onclick = () => runJob(() => chan.generic
+  ? post('/api/batch', { urls: chan.videos.filter(v => chanSel.has(v.id)).map(v => v.url).join('\n'), kind: $('chanKind').value })
+  : post('/api/channel/zip', { user: '@' + chan.user, ids: [...chanSel], kind: $('chanKind').value }), $('chanJob'), $('chanZip'));
+async function loadPlaylist(url) {
+  $('go').disabled = true; $('loading').style.display = 'block'; $('rescue').style.display = 'none';
+  try {
+    chan = await post('/api/playlist', { url, count: +$('chanCount').value || 10 }); chan.playlistUrl = url;
+    chanSel.clear(); chan.videos.forEach(v => chanSel.add(v.id)); renderChannel();
+    histAdd({ url, title: chan.user, author: chan.kind, cover: (chan.videos[0] || {}).cover || '', kind: 'channel' });
+    $('chanBox').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  } catch (ex) { showErr(ex.message); }
+  finally { $('go').disabled = false; $('loading').style.display = 'none'; }
+}
 histRender();
 
 /* ---------- PWA: cài lên màn hình chính + nhận link từ nút Chia sẻ ---------- */
@@ -897,6 +947,46 @@ $('toolGo').onclick = async () => {
   b.disabled = false; setTimeout(() => { b.textContent = 'Tạo & tải'; }, 2500);
 };
 
+/* ---------- xem thử ---------- */
+$('pvBtn').onclick = () => {
+  const box = $('pvBox'), v = toolSrc(); if (!v) { toast('Không có bản xem thử'); return; }
+  if (box.firstChild) { box.replaceChildren(); $('pvBtn').textContent = '▶ Xem thử'; return; }
+  const vid = el('video', { controls: '', playsinline: '', autoplay: '', preload: 'metadata', src: '/api/preview?t=' + encodeURIComponent(v.token), poster: cur.cover || '' });
+  vid.style.cssText = 'width:100%;max-height:60vh;border-radius:14px;background:#000;margin-bottom:12px';
+  vid.onerror = () => toast('Không xem thử được, hãy tải về để xem');
+  box.append(vid); $('pvBtn').textContent = '⏹ Đóng xem thử';
+};
+$('cover').onclick = () => { if (cur && cur.videos.length) { openTab('video'); if (!$('pvBox').firstChild) $('pvBtn').click(); } };
+
+/* ---------- phụ đề có sẵn của nguồn ---------- */
+$('subLoad').onclick = async () => {
+  const b = $('subLoad'), n = $('subNote'); b.disabled = true; n.style.display = 'none';
+  try {
+    const r = await fetch('/api/subs?url=' + encodeURIComponent(curUrl)), d = await r.json();
+    if (!r.ok) throw new Error(d.error || 'Lỗi ' + r.status);
+    if (!d.subs.length) { n.textContent = 'Video này không có phụ đề sẵn. Dùng tab ✨ AI để AI nghe lời thoại và tạo phụ đề (.srt/.vtt), rồi dịch.'; n.style.display = ''; return; }
+    const sel = $('subLang'); sel.replaceChildren(...d.subs.map(x => el('option', { value: x.lang, text: x.name })));
+    sel.style.display = ''; ['subSrt', 'subVtt', 'subTxt'].forEach(i => $(i).style.display = ''); b.textContent = '📝 Phụ đề (' + d.subs.length + ')';
+  } catch (ex) { n.textContent = ex.message; n.style.display = ''; } finally { b.disabled = false; }
+};
+async function subGet(fmt) {
+  try {
+    const r = await fetch('/api/subs?url=' + encodeURIComponent(curUrl) + '&lang=' + encodeURIComponent($('subLang').value) + '&fmt=' + fmt);
+    if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.error || 'Lỗi ' + r.status); }
+    saveBlob(await r.blob(), 'phude_' + $('subLang').value + '.' + fmt);
+  } catch (ex) { showErr(ex.message); }
+}
+$('subSrt').onclick = () => subGet('srt'); $('subVtt').onclick = () => subGet('vtt'); $('subTxt').onclick = () => subGet('txt');
+
+/* ---------- .vtt và .srt song ngữ ---------- */
+const srt2vtt = t => 'WEBVTT\n\n' + (t || '').replace(/(\d\d:\d\d:\d\d),(\d{3})/g, '$1.$2');
+function srtBlocks(t) { return (t || '').replace(/\r/g, '').trim().split(/\n\s*\n/).map(b => b.split('\n')).filter(l => l.length >= 3 && l[1].includes('-->')); }
+function srtMerge(a, b) {
+  const A = srtBlocks(a), B = srtBlocks(b); if (!A.length || A.length !== B.length) return '';
+  return A.map((x, i) => `${i + 1}\n${x[1]}\n${x.slice(2).join(' ')}\n${B[i].slice(2).join(' ')}\n`).join('\n');
+}
+let origSrt = '';
+
 /* ---------- chia sẻ có thời hạn + mã QR ---------- */
 $('shareBtn').onclick = async () => {
   const v = toolSrc() || (cur && cur.audio); if (!v) { showErr('Không có file để chia sẻ.'); return; }
@@ -925,7 +1015,7 @@ function followRender() {
   }));
 }
 function followBtn() {
-  if (!chan) return; const on = followLoad().some(f => f.user === chan.user);
+  if (!chan) return; $('chanFollow').style.display = chan.generic ? 'none' : ''; const on = followLoad().some(f => f.user === chan.user);
   $('chanFollow').textContent = on ? '★ Đang theo dõi' : '☆ Theo dõi';
 }
 function followSeen(c) {
@@ -958,6 +1048,16 @@ async function followCheckAll(manual) {
 }
 $('followCheck').onclick = () => followCheckAll(true);
 followRender(); setTimeout(() => followCheckAll(false), 2500);
+
+/* tải trước: vừa dán/gõ xong một link hợp lệ là hỏi máy chủ ngầm, bấm Tải sau đó có kết quả ngay (bộ nhớ đệm 10 phút) */
+let pfT = 0;
+$('url').addEventListener('input', () => {
+  clearTimeout(pfT);
+  pfT = setTimeout(() => {
+    const t = extractUrl($('url').value.trim());
+    if (SITE_RE.test(t) && t !== curUrl && !/^@/.test(t)) fetchInfo(t, false).catch(() => {});
+  }, 600);
+});
 </script>
 </body>
 </html>
